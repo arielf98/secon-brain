@@ -26,6 +26,10 @@ export class NoteIndex {
     this.notes.delete(path);
   }
 
+  get(path: string): IndexedNote | undefined {
+    return this.notes.get(path);
+  }
+
   search(query: string, limit: number): IndexedNote[] {
     const queryTokens = tokens(query);
     if (!queryTokens.size) return [];
