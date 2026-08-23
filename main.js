@@ -138,7 +138,8 @@ var DeepSeekClient = class {
       body: JSON.stringify({
         model: this.settings.model,
         messages,
-        max_tokens: (_a = request.maxOutputTokens) != null ? _a : this.settings.maxOutputTokens
+        max_tokens: (_a = request.maxOutputTokens) != null ? _a : this.settings.maxOutputTokens,
+        thinking: { type: "enabled" }
       })
     });
     const payload = responseJson(requireSuccess(response));

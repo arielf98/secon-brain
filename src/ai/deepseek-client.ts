@@ -30,6 +30,7 @@ export class DeepSeekClient implements AiClient {
         model: this.settings.model,
         messages,
         max_tokens: request.maxOutputTokens ?? this.settings.maxOutputTokens,
+        thinking: { type: "enabled" },
       }),
     });
     const payload = responseJson<ChatPayload>(requireSuccess(response));

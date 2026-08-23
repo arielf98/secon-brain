@@ -114,10 +114,12 @@ test("DeepSeek uses its configured OpenAI-compatible base URL and key", async ()
   const transport = new FakeTransport({ choices: [{ message: { content: "answer" } }] });
   const client = new DeepSeekClient(settings({ provider: "deepseek", apiKey: "deep-key", baseUrl: "https://deep.example/v1" }), transport);
   const response = await client.complete({ prompt: "A question", maxOutputTokens: 20 });
+  const payload = JSON.parse(String(transport.requests[0]?.body)) as { thinking?: { type?: string } };
 
   assert.equal(response.text, "answer");
   assert.equal(transport.requests[0]?.url, "https://deep.example/v1/chat/completions");
   assert.equal(transport.requests[0]?.headers?.Authorization, "Bearer deep-key");
+  assert.deepEqual(payload.thinking, { type: "enabled" });
 });
 
 test("invalid structured output remains a text-only preview", async () => {
