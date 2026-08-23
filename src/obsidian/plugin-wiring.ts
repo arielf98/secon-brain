@@ -1,7 +1,7 @@
 import type { SyncReport } from "../sync/sync-report.js";
 import type { WorkspaceLeaf } from "obsidian";
 
-export const RELATED_NOTES_VIEW_TYPE = "second-brain-related-notes";
+export const RELATED_NOTES_VIEW_TYPE = "sken-brain-related-notes";
 
 export interface CommandActions {
   syncNow: () => void | Promise<void>;
@@ -23,12 +23,12 @@ export function registerSecondBrainCommands(
   createRelatedView: (leaf: WorkspaceLeaf) => unknown,
 ): void {
   const commands: Array<[string, string, () => void | Promise<void>]> = [
-    ["second-brain:sync-now", "Sync Now", actions.syncNow],
-    ["second-brain:ask-vault", "Ask Vault", actions.askVault],
-    ["second-brain:summarize-note", "Summarize Note", actions.summarizeNote],
-    ["second-brain:explain-relation", "Explain relation", actions.explainRelation],
-    ["second-brain:extract-structure", "Extract structure", actions.extractStructure],
-    ["second-brain:create-note", "Create note from prompt", actions.createNote],
+    ["sken-brain:sync-now", "Sync Now", actions.syncNow],
+    ["sken-brain:ask-vault", "Ask Vault", actions.askVault],
+    ["sken-brain:summarize-note", "Summarize Note", actions.summarizeNote],
+    ["sken-brain:explain-relation", "Explain relation", actions.explainRelation],
+    ["sken-brain:extract-structure", "Extract structure", actions.extractStructure],
+    ["sken-brain:create-note", "Create note from prompt", actions.createNote],
   ];
   for (const [id, name, callback] of commands) plugin.addCommand({ id, name, callback });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);

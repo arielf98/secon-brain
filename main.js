@@ -536,7 +536,7 @@ var LoopbackGoogleAuth = class {
       callbackUrl = `http://127.0.0.1:${port}${(_a = request.url) != null ? _a : "/"}`;
       response.statusCode = 200;
       response.setHeader("Content-Type", "text/plain; charset=utf-8");
-      response.end("Second Brain authorization complete. You can close this window.");
+      response.end("Sken Brain authorization complete. You can close this window.");
     });
     let port = 0;
     try {
@@ -852,7 +852,7 @@ var AskVaultModal = class extends import_obsidian2.Modal {
     container.createEl("h2", { text: "Ask Vault" });
     const input = container.createEl("textarea", { placeholder: "Ask about your notes..." });
     input.rows = 4;
-    const answer = container.createDiv({ cls: "second-brain-ai-answer" });
+    const answer = container.createDiv({ cls: "sken-brain-ai-answer" });
     container.createEl("button", { text: "Ask" }).addEventListener("click", async () => {
       const query = input.value.trim();
       if (!query) return;
@@ -885,7 +885,7 @@ var PreviewModal = class extends import_obsidian3.Modal {
     if (this.preview.sources.length) container.createEl("p", { text: `Sources: ${this.preview.sources.join(", ")}` });
     if (this.preview.proposed) container.createEl("pre", { text: JSON.stringify(this.preview.proposed, null, 2) });
     const error = container.createDiv();
-    const actions = container.createDiv({ cls: "second-brain-modal-actions" });
+    const actions = container.createDiv({ cls: "sken-brain-modal-actions" });
     actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
     const apply = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
     apply.addEventListener("click", async () => {
@@ -905,15 +905,15 @@ var PreviewModal = class extends import_obsidian3.Modal {
 var import_obsidian4 = require("obsidian");
 
 // src/obsidian/plugin-wiring.ts
-var RELATED_NOTES_VIEW_TYPE = "second-brain-related-notes";
+var RELATED_NOTES_VIEW_TYPE = "sken-brain-related-notes";
 function registerSecondBrainCommands(plugin, actions, createRelatedView) {
   const commands = [
-    ["second-brain:sync-now", "Sync Now", actions.syncNow],
-    ["second-brain:ask-vault", "Ask Vault", actions.askVault],
-    ["second-brain:summarize-note", "Summarize Note", actions.summarizeNote],
-    ["second-brain:explain-relation", "Explain relation", actions.explainRelation],
-    ["second-brain:extract-structure", "Extract structure", actions.extractStructure],
-    ["second-brain:create-note", "Create note from prompt", actions.createNote]
+    ["sken-brain:sync-now", "Sync Now", actions.syncNow],
+    ["sken-brain:ask-vault", "Ask Vault", actions.askVault],
+    ["sken-brain:summarize-note", "Summarize Note", actions.summarizeNote],
+    ["sken-brain:explain-relation", "Explain relation", actions.explainRelation],
+    ["sken-brain:extract-structure", "Extract structure", actions.extractStructure],
+    ["sken-brain:create-note", "Create note from prompt", actions.createNote]
   ];
   for (const [id, name, callback] of commands) plugin.addCommand({ id, name, callback });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);
@@ -950,7 +950,7 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
   render() {
     const container = this.contentEl;
     container.empty();
-    container.addClass("second-brain-related-notes");
+    container.addClass("sken-brain-related-notes");
     container.createEl("h3", { text: "Related Notes" });
     if (!this.activePath) {
       container.createEl("p", { text: "Open a Markdown note to see contextual suggestions." });
@@ -962,10 +962,10 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
       return;
     }
     for (const item of related) {
-      const card = container.createDiv({ cls: "second-brain-related-card" });
+      const card = container.createDiv({ cls: "sken-brain-related-card" });
       card.createEl("a", { text: item.path, href: `#${item.path}` });
       card.createEl("p", { text: item.reasons.join(" \xB7 ") });
-      card.createEl("button", { text: "Explain relation", cls: "second-brain-compact-button" }).addEventListener("click", () => void this.onExplain(this.activePath, item.path));
+      card.createEl("button", { text: "Explain relation", cls: "sken-brain-compact-button" }).addEventListener("click", () => void this.onExplain(this.activePath, item.path));
     }
   }
 };
@@ -1008,7 +1008,7 @@ var SecondBrainSettingTab = class extends import_obsidian5.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Second Brain" });
+    containerEl.createEl("h2", { text: "Sken Brain" });
     const settings = this.getSettings();
     const update = async (patch) => {
       Object.assign(settings, patch);
@@ -1396,7 +1396,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       return (_a2 = this.watcher) == null ? void 0 : _a2.stop();
     });
     this.statusBar = new SyncStatusBar(this.addStatusBarItem());
-    this.statusBar.setText("Second Brain");
+    this.statusBar.setText("Sken Brain");
     this.addSettingTab(new SecondBrainSettingTab(
       this.app,
       this,
@@ -1506,7 +1506,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
   }
   aiCommands(transport, vault) {
     if (!this.pluginSettings.apiKey || !this.pluginSettings.model) {
-      new import_obsidian6.Notice("Configure an AI provider, API key, and model in Second Brain settings.");
+      new import_obsidian6.Notice("Configure an AI provider, API key, and model in Sken Brain settings.");
       return void 0;
     }
     const settings = {

@@ -164,7 +164,7 @@ export class LoopbackGoogleAuth implements GoogleAuth {
       callbackUrl = `http://127.0.0.1:${port}${request.url ?? "/"}`;
       response.statusCode = 200;
       response.setHeader("Content-Type", "text/plain; charset=utf-8");
-      response.end("Second Brain authorization complete. You can close this window.");
+      response.end("Sken Brain authorization complete. You can close this window.");
     });
 
     let port = 0;

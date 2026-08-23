@@ -18,7 +18,7 @@ export class PreviewModal extends Modal {
     if (this.preview.sources.length) container.createEl("p", { text: `Sources: ${this.preview.sources.join(", ")}` });
     if (this.preview.proposed) container.createEl("pre", { text: JSON.stringify(this.preview.proposed, null, 2) });
     const error = container.createDiv();
-    const actions = container.createDiv({ cls: "second-brain-modal-actions" });
+    const actions = container.createDiv({ cls: "sken-brain-modal-actions" });
     actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
     const apply = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
     apply.addEventListener("click", async () => {

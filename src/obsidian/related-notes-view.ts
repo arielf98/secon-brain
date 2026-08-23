@@ -37,7 +37,7 @@ export class RelatedNotesView extends ItemView {
   private render(): void {
     const container = this.contentEl;
     container.empty();
-    container.addClass("second-brain-related-notes");
+    container.addClass("sken-brain-related-notes");
     container.createEl("h3", { text: "Related Notes" });
     if (!this.activePath) {
       container.createEl("p", { text: "Open a Markdown note to see contextual suggestions." });
@@ -49,10 +49,10 @@ export class RelatedNotesView extends ItemView {
       return;
     }
     for (const item of related) {
-      const card = container.createDiv({ cls: "second-brain-related-card" });
+      const card = container.createDiv({ cls: "sken-brain-related-card" });
       card.createEl("a", { text: item.path, href: `#${item.path}` });
       card.createEl("p", { text: item.reasons.join(" · ") });
-      card.createEl("button", { text: "Explain relation", cls: "second-brain-compact-button" })
+      card.createEl("button", { text: "Explain relation", cls: "sken-brain-compact-button" })
         .addEventListener("click", () => void this.onExplain(this.activePath, item.path));
     }
   }

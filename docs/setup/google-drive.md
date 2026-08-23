@@ -20,8 +20,8 @@ The plugin uses the OAuth 2.0 authorization-code flow with PKCE and a loopback r
 
 ## 3. Configure the plugin
 
-1. Install or copy the plugin into the vault's `.obsidian/plugins/second-brain/` directory.
-2. Enable **Second Brain** in Obsidian.
+1. Install or copy the plugin into the vault's `.obsidian/plugins/sken-brain/` directory.
+2. Enable **Sken Brain** in Obsidian.
 3. Open its settings and paste the Google desktop client ID.
 4. Select the Drive folder that will mirror this vault.
 5. Choose **Authorize Google Drive** and complete the browser consent flow.

@@ -42,7 +42,7 @@ export default class SecondBrainPlugin extends Plugin {
     this.register(() => this.watcher?.stop());
 
     this.statusBar = new SyncStatusBar(this.addStatusBarItem());
-    this.statusBar.setText("Second Brain");
+    this.statusBar.setText("Sken Brain");
     this.addSettingTab(new SecondBrainSettingTab(
       this.app,
       this,
@@ -158,7 +158,7 @@ export default class SecondBrainPlugin extends Plugin {
 
   private aiCommands(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): AiCommands | undefined {
     if (!this.pluginSettings.apiKey || !this.pluginSettings.model) {
-      new Notice("Configure an AI provider, API key, and model in Second Brain settings.");
+      new Notice("Configure an AI provider, API key, and model in Sken Brain settings.");
       return undefined;
     }
     const settings = {

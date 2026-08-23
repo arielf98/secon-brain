@@ -23,7 +23,7 @@ export class AskVaultModal extends Modal {
     container.createEl("h2", { text: "Ask Vault" });
     const input = container.createEl("textarea", { placeholder: "Ask about your notes..." });
     input.rows = 4;
-    const answer = container.createDiv({ cls: "second-brain-ai-answer" });
+    const answer = container.createDiv({ cls: "sken-brain-ai-answer" });
     container.createEl("button", { text: "Ask" }).addEventListener("click", async () => {
       const query = input.value.trim();
       if (!query) return;

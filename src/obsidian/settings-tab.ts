@@ -68,7 +68,7 @@ export class SecondBrainSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Second Brain" });
+    containerEl.createEl("h2", { text: "Sken Brain" });
     const settings = this.getSettings();
     const update = async (patch: Partial<SecondBrainSettings>): Promise<void> => {
       Object.assign(settings, patch);
