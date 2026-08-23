@@ -8,7 +8,13 @@ interface StoredManifest {
 type LoadData = () => Promise<unknown>;
 type SaveData = (value: unknown) => Promise<void>;
 
-export class DataManifestStore {
+export interface ManifestStore {
+  load(): Promise<Record<string, ManifestEntry>>;
+  save(entries: Record<string, ManifestEntry>): Promise<void>;
+  clear(): Promise<void>;
+}
+
+export class DataManifestStore implements ManifestStore {
   constructor(
     private readonly loadData: LoadData,
     private readonly saveData: SaveData,

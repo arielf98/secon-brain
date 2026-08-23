@@ -41,13 +41,14 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
       };
     }
 
-    const localChanged = !local || local.hash !== base.baseLocalHash;
-    const remoteChanged = !remote || remote.hash !== base.baseRemoteHash;
+    const localChanged = local ? local.hash !== base.baseLocalHash : !base.localDeleted;
+    const remoteChanged = remote ? remote.hash !== base.baseRemoteHash : !base.remoteDeleted;
 
     if (!local && !remote) return { type: "skip", path, reason: "deleted-on-both-sides" };
 
     if (local && remote) {
       if (local.hash === remote.hash) return { type: "skip", path, reason: "unchanged" };
+      if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
       if (localChanged && !remoteChanged) return { type: "upload", path, reason: "changed-locally" };
       if (!localChanged && remoteChanged) return { type: "download", path, remote, reason: "changed-remotely" };
       return {
@@ -60,6 +61,7 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
     }
 
     if (!local && remote) {
+      if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
       if (!remoteChanged) return { type: "download", path, remote, reason: "preserve-remote-after-local-delete" };
       return {
         type: "conflict",
@@ -71,6 +73,7 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
     }
 
     if (local && !remote) {
+      if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
       if (!localChanged) return { type: "upload", path, reason: "preserve-local-after-remote-delete" };
       return { type: "conflict", path, reason: "remote-deleted-local-edited" };
     }

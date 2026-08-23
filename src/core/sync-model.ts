@@ -18,5 +18,7 @@ export interface ManifestEntry {
   baseRemoteHash?: string;
   localHash?: string;
   remoteHash?: string;
+  localDeleted?: boolean;
+  remoteDeleted?: boolean;
   lastSyncedAt: number;
 }
