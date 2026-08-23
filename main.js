@@ -1429,10 +1429,23 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     }
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshRelatedView()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshRelatedView()));
+    const scheduleSync = () => {
+      if (this.pluginSettings.paused || !this.pluginSettings.googleToken) return;
+      if (this.syncTimer) clearTimeout(this.syncTimer);
+      this.syncTimer = setTimeout(() => {
+        this.syncTimer = void 0;
+        void this.syncNow(transport, vault);
+      }, 1e3);
+    };
+    this.registerEvent(this.app.vault.on("create", scheduleSync));
+    this.registerEvent(this.app.vault.on("modify", scheduleSync));
+    this.registerEvent(this.app.vault.on("delete", scheduleSync));
+    this.registerEvent(this.app.vault.on("rename", scheduleSync));
     this.registerInterval(window.setInterval(() => {
       if (!this.pluginSettings.paused) void this.syncNow(transport, vault);
     }, Math.max(1, this.pluginSettings.syncIntervalMinutes) * 6e4));
     this.refreshRelatedView();
+    if (this.pluginSettings.googleToken) void this.syncNow(transport, vault);
   }
   async syncNow(transport, vault) {
     if (this.pluginSettings.paused) return;
