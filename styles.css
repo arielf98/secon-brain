@@ -1,0 +1,72 @@
+.second-brain-related-notes {
+  padding: var(--size-4-2);
+}
+
+.second-brain-related-notes h3 {
+  margin-top: 0;
+}
+
+.second-brain-related-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin: var(--size-4-2) 0;
+  padding: var(--size-4-2);
+}
+
+.second-brain-related-card a {
+  color: var(--text-accent);
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.second-brain-related-card p {
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+  margin: var(--size-4-1) 0;
+}
+
+.second-brain-compact-button {
+  font-size: var(--font-smaller);
+}
+
+.second-brain-ai-answer {
+  margin-top: var(--size-4-3);
+  white-space: pre-wrap;
+}
+
+.second-brain-modal-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  justify-content: flex-end;
+  margin-top: var(--size-4-3);
+}
+
+.status-bar-item[data-sync-status="conflict"] {
+  color: var(--text-warning);
+}
+
+.status-bar-item[data-sync-status="offline"],
+.status-bar-item[data-sync-status="auth-required"] {
+  color: var(--text-error);
+}
+
+@media (max-width: 780px) {
+  .second-brain-related-notes {
+    max-height: 38vh;
+    overflow-y: auto;
+  }
+
+  .second-brain-related-card {
+    display: grid;
+    gap: var(--size-4-1);
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .second-brain-related-card p {
+    grid-column: 1 / -1;
+  }
+
+  .second-brain-related-card button {
+    white-space: nowrap;
+  }
+}

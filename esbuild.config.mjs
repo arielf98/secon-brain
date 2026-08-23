@@ -3,7 +3,7 @@ import esbuild from "esbuild";
 const options = {
   entryPoints: ["src/main.ts"],
   bundle: true,
-  external: ["obsidian", "electron"],
+  external: ["obsidian", "electron", "node:http"],
   format: "cjs",
   platform: "browser",
   target: "es2019",

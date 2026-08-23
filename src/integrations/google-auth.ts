@@ -3,6 +3,7 @@ import {
   responseJson,
   type HttpTransport,
 } from "./http.js";
+import { createServer } from "node:http";
 
 const AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -22,6 +23,19 @@ export interface GoogleToken {
   accessToken: string;
   refreshToken?: string;
   expiresAt: number;
+}
+
+export interface GoogleTokenStore {
+  load(): Promise<GoogleToken | undefined>;
+  save(token: GoogleToken): Promise<void>;
+  clear(): Promise<void>;
+}
+
+export interface GoogleAuth {
+  authorize(): Promise<GoogleToken>;
+  refresh(token: GoogleToken): Promise<GoogleToken>;
+  clear(): Promise<void>;
+  getAccessToken(): Promise<string>;
 }
 
 export interface AuthorizationCode {
@@ -132,4 +146,83 @@ export class GoogleAuthClient {
     });
     return tokenFromResponse(responseJson<TokenResponse>(requireSuccess(response)), refreshToken);
   }
+}
+
+export class LoopbackGoogleAuth implements GoogleAuth {
+  constructor(
+    private readonly config: GoogleOAuthConfig,
+    private readonly transport: HttpTransport,
+    private readonly tokenStore: GoogleTokenStore,
+    private readonly openExternal: (url: string) => Promise<void> | void,
+  ) {}
+
+  async authorize(): Promise<GoogleToken> {
+    const pkce = await createPkcePair();
+    const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
+    let callbackUrl = "";
+    const server = createServer((request, response) => {
+      callbackUrl = `http://127.0.0.1:${port}${request.url ?? "/"}`;
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "text/plain; charset=utf-8");
+      response.end("Second Brain authorization complete. You can close this window.");
+    });
+
+    let port = 0;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (!address || typeof address === "string") {
+            reject(new OAuthAuthorizationError("Could not open the Google OAuth callback"));
+            return;
+          }
+          port = address.port;
+          resolve();
+        });
+      });
+      const redirectUri = `http://127.0.0.1:${port}`;
+      await this.openExternal(buildAuthorizationUrl(this.config, redirectUri, state, pkce.challenge));
+      const callback = await waitForCallback(server, () => callbackUrl);
+      const authorization = parseAuthorizationResponse(callback, state);
+      const token = await new GoogleAuthClient(this.config, this.transport).exchangeCode(authorization.code, pkce.verifier, redirectUri);
+      await this.tokenStore.save(token);
+      return token;
+    } finally {
+      server.close();
+    }
+  }
+
+  async refresh(token: GoogleToken): Promise<GoogleToken> {
+    if (!token.refreshToken) throw new OAuthAuthorizationError("Google authorization has no refresh token");
+    const refreshed = await new GoogleAuthClient(this.config, this.transport).refreshAccessToken(token.refreshToken);
+    await this.tokenStore.save(refreshed);
+    return refreshed;
+  }
+
+  async clear(): Promise<void> {
+    await this.tokenStore.clear();
+  }
+
+  async getAccessToken(): Promise<string> {
+    const token = await this.tokenStore.load();
+    if (!token) throw new OAuthAuthorizationError("Google authorization is required");
+    if (token.expiresAt > Date.now() + 60_000) return token.accessToken;
+    return (await this.refresh(token)).accessToken;
+  }
+}
+
+function waitForCallback(server: ReturnType<typeof createServer>, getUrl: () => string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      const url = getUrl();
+      if (!url) return;
+      clearInterval(timer);
+      resolve(url);
+    }, 25);
+    server.once("error", (error) => {
+      clearInterval(timer);
+      reject(error);
+    });
+  });
 }
