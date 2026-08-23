@@ -14,7 +14,8 @@ export interface RemoteFile extends FileSnapshot {
 export interface ManifestEntry {
   path: string;
   driveId?: string;
-  baseHash?: string;
+  baseLocalHash?: string;
+  baseRemoteHash?: string;
   localHash?: string;
   remoteHash?: string;
   lastSyncedAt: number;

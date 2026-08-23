@@ -38,7 +38,7 @@ The plugin is organized around small responsibilities:
 
 - **Sync engine** — coordinates scans, comparisons, uploads, downloads, conflict handling, and status.
 - **Google Drive client** — OAuth, folder traversal, file metadata, upload/download, and retryable requests.
-- **Local manifest store** — device-local snapshot of path, hash, size, mtime, Drive file ID, and last-sync state.
+- **Local manifest store** — device-local snapshot of path, local content hash, remote Drive fingerprint, size, mtime, Drive file ID, and last-sync state.
 - **Conflict manager** — creates conflict copies and records a conflict entry without deleting the other version.
 - **Vault index** — indexes title, path, headings, tags/frontmatter, links, text, and modification time.
 - **AI provider adapter** — normalizes OpenAI, DeepSeek, and later compatible providers behind one interface.
@@ -63,7 +63,7 @@ flowchart LR
 
 The plugin excludes `.obsidian`, workspace/cache files, plugin settings, OAuth tokens, and API keys from Drive sync. All other user files, including attachments, are eligible.
 
-Each device stores a last-synced snapshot locally. A sync compares three states: the local file, the remote Drive file, and the last common snapshot.
+Each device stores a last-synced snapshot locally. A sync compares three states: the local file, the remote Drive file, and the last common snapshot. The manifest keeps local content hashes and remote Drive fingerprints separately; unlike hash formats are never compared directly.
 
 - Changed only locally → upload.
 - Changed only remotely → download.

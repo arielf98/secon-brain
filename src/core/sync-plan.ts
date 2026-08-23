@@ -41,9 +41,8 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
       };
     }
 
-    const baseHash = base.baseHash;
-    const localChanged = !local || local.hash !== baseHash;
-    const remoteChanged = !remote || remote.hash !== baseHash;
+    const localChanged = !local || local.hash !== base.baseLocalHash;
+    const remoteChanged = !remote || remote.hash !== base.baseRemoteHash;
 
     if (!local && !remote) return { type: "skip", path, reason: "deleted-on-both-sides" };
 

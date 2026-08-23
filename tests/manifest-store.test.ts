@@ -15,7 +15,8 @@ test("saves and reloads a versioned manifest", async () => {
   const entries: Record<string, ManifestEntry> = {
     "Notes/idea.md": {
       path: "Notes/idea.md",
-      baseHash: "abc",
+      baseLocalHash: "abc",
+      baseRemoteHash: "abc",
       lastSyncedAt: 1,
     },
   };

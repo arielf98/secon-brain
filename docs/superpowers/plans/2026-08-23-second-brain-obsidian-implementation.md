@@ -15,6 +15,7 @@
 - The local vault is the working source of truth; Google Drive is a shared mirror.
 - Sync Markdown, images, PDFs, and other user files; exclude `.obsidian`, workspace/cache files, plugin settings, OAuth tokens, and API keys.
 - Use three-way comparison: local state, remote state, and last common snapshot.
+- Store local content hashes and remote Drive fingerprints separately; never compare unlike hash formats directly.
 - Never discard a conflict version automatically; write remote conflicts to `_sync-conflicts/`.
 - Related Notes uses local scoring and never calls AI automatically.
 - AI receives bounded retrieved context, not the full vault by default.
@@ -110,7 +111,7 @@ git commit -m "feat: scaffold second brain obsidian plugin"
 **Interfaces:**
 - `FileSnapshot { path: string; hash: string; size: number; modifiedAt: number; deleted?: boolean }`
 - `RemoteFile extends FileSnapshot { driveId: string; mimeType: string }`
-- `ManifestEntry { path: string; driveId?: string; baseHash?: string; localHash?: string; remoteHash?: string; lastSyncedAt: number }`
+- `ManifestEntry { path: string; driveId?: string; baseLocalHash?: string; baseRemoteHash?: string; localHash?: string; remoteHash?: string; lastSyncedAt: number }`
 - `isSyncablePath(path: string): boolean`
 - `sha256(bytes: ArrayBuffer | Uint8Array): Promise<string>`
 
@@ -186,7 +187,7 @@ Expected: FAIL because `planSync` and `makeConflictPath` do not exist.
 
 - [ ] **Step 3: Implement the pure planner**
 
-Compare each path against the base hash. Keep the local path as the primary file for conflicts and copy the remote content to the generated conflict path. Use UTC timestamps and preserve the original extension. Return actions in stable lexicographic path order so previews and tests are deterministic.
+Compare each local path against `baseLocalHash` and each remote path against `baseRemoteHash`; never compare a local SHA-256 directly with a Drive fingerprint. Keep the local path as the primary file for conflicts and copy the remote content to the generated conflict path. Use UTC timestamps and preserve the original extension. Return actions in stable lexicographic path order so previews and tests are deterministic.
 
 - [ ] **Step 4: Run the test suite**
 

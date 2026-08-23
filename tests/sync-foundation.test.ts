@@ -42,7 +42,8 @@ const remoteFile = (path: string, hash: string): RemoteFile => ({
 
 const baseFile = (path: string, hash: string): ManifestEntry => ({
   path,
-  baseHash: hash,
+  baseLocalHash: hash,
+  baseRemoteHash: hash,
   lastSyncedAt: 1,
 });
 
