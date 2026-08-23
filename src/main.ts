@@ -2,6 +2,7 @@ import { Notice, Plugin } from "obsidian";
 import { shell } from "electron";
 import { DeepSeekClient } from "./ai/deepseek-client.js";
 import { AiCommands } from "./ai/ai-commands.js";
+import type { AiPreview } from "./ai/ai-types.js";
 import { LocalContextRetriever } from "./ai/context-retriever.js";
 import { OpenAiClient } from "./ai/openai-client.js";
 import { NoteIndex } from "./core/note-index.js";
@@ -10,6 +11,7 @@ import { GoogleDriveClient } from "./integrations/google-drive.js";
 import { ObsidianRequestTransport } from "./obsidian/request-transport.js";
 import { ObsidianIndexWatcher } from "./obsidian/index-watcher.js";
 import { AskVaultModal } from "./obsidian/ask-vault-modal.js";
+import { runAiRequest } from "./obsidian/ai-request.js";
 import { PreviewModal } from "./obsidian/preview-modal.js";
 import { RelatedNotesView } from "./obsidian/related-notes-view.js";
 import { RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands } from "./obsidian/plugin-wiring.js";
@@ -123,7 +125,7 @@ export default class SecondBrainPlugin extends Plugin {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.summarizeNote(path), commands);
+    await this.openPreview("Summarize note", () => commands.summarizeNote(path), commands);
   }
 
   private async explainRelation(activePath: string, relatedPath: string | undefined, transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
@@ -131,29 +133,27 @@ export default class SecondBrainPlugin extends Plugin {
     const target = relatedPath ?? this.index.related(activePath, 1)[0]?.path;
     const commands = this.aiCommands(transport, vault);
     if (!target || !commands) return;
-    await this.openPreview(commands.explainRelation(activePath, target), commands);
+    await this.openPreview("Explain relation", () => commands.explainRelation(activePath, target), commands);
   }
 
   private async extractStructure(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.extractStructure(path), commands);
+    await this.openPreview("Extract structure", () => commands.extractStructure(path), commands);
   }
 
   private async createNote(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
     const prompt = window.prompt("Create note from prompt");
     const commands = this.aiCommands(transport, vault);
     if (!prompt || !commands) return;
-    await this.openPreview(commands.createNote(prompt), commands);
+    await this.openPreview("Create note from prompt", () => commands.createNote(prompt), commands);
   }
 
-  private async openPreview(previewPromise: ReturnType<AiCommands["summarizeNote"]>, commands: AiCommands): Promise<void> {
-    try {
-      new PreviewModal(this.app, await previewPromise, (preview) => commands.applyPreview(preview)).open();
-    } catch (error) {
-      new Notice(error instanceof Error ? error.message : String(error));
-    }
+  private async openPreview(title: string, request: () => Promise<AiPreview>, commands: AiCommands): Promise<void> {
+    const modal = new PreviewModal(this.app, title, (preview) => commands.applyPreview(preview));
+    modal.open();
+    await runAiRequest(request, (state) => modal.setState(state));
   }
 
   private aiCommands(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): AiCommands | undefined {

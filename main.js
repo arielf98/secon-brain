@@ -835,6 +835,18 @@ function isMarkdownFile(file) {
 
 // src/obsidian/ask-vault-modal.ts
 var import_obsidian2 = require("obsidian");
+
+// src/obsidian/ai-request.ts
+async function runAiRequest(request, onState) {
+  onState({ status: "loading" });
+  try {
+    onState({ status: "ready", value: await request() });
+  } catch (error) {
+    onState({ status: "error", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+// src/obsidian/ask-vault-modal.ts
 var AskVaultModal = class extends import_obsidian2.Modal {
   constructor(app, ask) {
     super(app);
@@ -844,6 +856,8 @@ var AskVaultModal = class extends import_obsidian2.Modal {
     this.renderForm();
   }
   onClose() {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
     this.contentEl.empty();
   }
   renderForm() {
@@ -853,50 +867,164 @@ var AskVaultModal = class extends import_obsidian2.Modal {
     const input = container.createEl("textarea", { placeholder: "Ask about your notes..." });
     input.rows = 4;
     const answer = container.createDiv({ cls: "sken-brain-ai-answer" });
-    container.createEl("button", { text: "Ask" }).addEventListener("click", async () => {
+    const askButton = container.createEl("button", { text: "Ask" });
+    askButton.addEventListener("click", async () => {
       const query = input.value.trim();
       if (!query) return;
-      answer.setText("Thinking\u2026");
-      try {
-        const preview = await this.ask(query);
+      await runAiRequest(() => this.ask(query), (state) => {
         answer.empty();
-        answer.createEl("p", { text: preview.text });
-        if (preview.sources.length) answer.createEl("small", { text: `Sources: ${preview.sources.join(", ")}` });
-      } catch (error) {
-        answer.setText(error instanceof Error ? error.message : String(error));
-      }
+        answer.className = "sken-brain-ai-answer";
+        askButton.disabled = state.status === "loading";
+        askButton.setText(state.status === "loading" ? "Processing\u2026" : "Ask");
+        if (state.status === "loading") {
+          const spinner = answer.createSpan({ cls: "sken-brain-ai-spinner" });
+          spinner.setAttribute("aria-hidden", "true");
+          answer.createSpan({ text: "AI sedang memproses\u2026" });
+        } else if (state.status === "error") {
+          answer.addClass("sken-brain-ai-status-error");
+          answer.setText(state.message);
+        } else {
+          this.renderAnswer(answer, state.value);
+        }
+      });
     });
+  }
+  renderAnswer(container, preview) {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.markdownComponent = new import_obsidian2.Component();
+    this.markdownComponent.load();
+    const result = container.createDiv({ cls: "sken-brain-ai-markdown" });
+    void import_obsidian2.MarkdownRenderer.render(this.app, preview.text, result, "", this.markdownComponent).catch((error) => {
+      container.setText(error instanceof Error ? error.message : String(error));
+    });
+    if (preview.sources.length) container.createEl("small", { text: `Sources: ${preview.sources.join(", ")}` });
   }
 };
 
 // src/obsidian/preview-modal.ts
 var import_obsidian3 = require("obsidian");
 var PreviewModal = class extends import_obsidian3.Modal {
-  constructor(app, preview, apply) {
+  constructor(app, loadingTitle, apply) {
     super(app);
-    this.preview = preview;
     this.apply = apply;
+    this.loadingTitle = loadingTitle;
   }
   onOpen() {
-    const container = this.contentEl;
-    container.empty();
-    container.createEl("h2", { text: this.preview.title });
-    container.createEl("pre", { text: this.preview.text });
-    if (this.preview.sources.length) container.createEl("p", { text: `Sources: ${this.preview.sources.join(", ")}` });
-    if (this.preview.proposed) container.createEl("pre", { text: JSON.stringify(this.preview.proposed, null, 2) });
-    const error = container.createDiv();
-    const actions = container.createDiv({ cls: "sken-brain-modal-actions" });
+    this.renderLayout();
+    this.setState({ status: "loading" });
+  }
+  onClose() {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.contentEl.empty();
+  }
+  setState(state) {
+    var _a, _b;
+    if (!this.bodyEl || !this.applyButton) return;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.markdownComponent = void 0;
+    this.bodyEl.empty();
+    this.statusEl = this.bodyEl.createDiv({ cls: "sken-brain-ai-status" });
+    this.statusEl.setAttribute("role", "status");
+    this.statusEl.setAttribute("aria-live", "polite");
+    this.statusEl.className = "sken-brain-ai-status";
+    this.applyButton.style.display = "none";
+    this.applyButton.disabled = true;
+    if (state.status === "loading") {
+      this.renderLoading();
+      return;
+    }
+    if (state.status === "error") {
+      this.renderError(state.message);
+      return;
+    }
+    this.preview = state.value;
+    (_b = this.headingEl) == null ? void 0 : _b.setText(state.value.title);
+    this.renderPreview(state.value);
+    this.applyButton.style.display = "";
+    this.applyButton.disabled = false;
+  }
+  renderLayout() {
+    this.contentEl.empty();
+    this.contentEl.addClass("sken-brain-ai-modal");
+    this.headingEl = this.contentEl.createEl("h2", { text: this.loadingTitle });
+    this.bodyEl = this.contentEl.createDiv({ cls: "sken-brain-ai-modal-body" });
+    this.statusEl = this.bodyEl.createDiv({ cls: "sken-brain-ai-status" });
+    this.statusEl.setAttribute("role", "status");
+    this.statusEl.setAttribute("aria-live", "polite");
+    const actions = this.contentEl.createDiv({ cls: "sken-brain-modal-actions" });
     actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
-    const apply = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
-    apply.addEventListener("click", async () => {
-      apply.disabled = true;
+    this.applyButton = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
+    this.applyButton.style.display = "none";
+    this.applyButton.disabled = true;
+    this.applyButton.addEventListener("click", async () => {
+      if (!this.preview || !this.applyButton) return;
+      this.applyButton.disabled = true;
       try {
         await this.apply(this.preview);
         this.close();
       } catch (reason) {
-        apply.disabled = false;
-        error.setText(reason instanceof Error ? reason.message : String(reason));
+        this.applyButton.disabled = false;
+        this.showError(reason instanceof Error ? reason.message : String(reason));
       }
+    });
+  }
+  renderLoading() {
+    const spinner = this.statusEl.createSpan({ cls: "sken-brain-ai-spinner" });
+    spinner.setAttribute("aria-hidden", "true");
+    this.statusEl.createSpan({ text: "AI sedang memproses\u2026" });
+  }
+  renderError(message) {
+    this.statusEl.addClass("sken-brain-ai-status-error");
+    this.statusEl.createSpan({ text: message });
+  }
+  showError(message) {
+    this.statusEl.empty();
+    this.statusEl.className = "sken-brain-ai-status sken-brain-ai-status-error";
+    this.statusEl.createSpan({ text: message });
+  }
+  renderPreview(preview) {
+    const result = this.bodyEl.createDiv({ cls: "sken-brain-ai-result" });
+    if (preview.type === "extract-structure" && preview.proposed) {
+      this.renderProposedStructure(result, preview.proposed);
+    } else if (preview.type === "create-note" && preview.changes[0]) {
+      result.createEl("h3", { text: "New note" });
+      result.createEl("p", { text: preview.changes[0].path, cls: "sken-brain-ai-note-path" });
+      const noteContent = result.createDiv({ cls: "sken-brain-ai-markdown" });
+      this.renderMarkdown(preview.changes[0].content, noteContent);
+    } else {
+      this.renderMarkdown(preview.text, result);
+    }
+    if (preview.sources.length) {
+      result.createEl("p", { text: `Sources: ${preview.sources.join(", ")}`, cls: "sken-brain-ai-sources" });
+    }
+  }
+  renderProposedStructure(container, proposed) {
+    const groups = [
+      ["Tags", proposed.tags],
+      ["Tasks", proposed.tasks],
+      ["Links", proposed.links]
+    ];
+    const hasSuggestions = groups.some(([, items]) => items.length > 0);
+    if (!hasSuggestions) {
+      container.createEl("p", { text: "No structured suggestions returned." });
+      return;
+    }
+    for (const [label, items] of groups) {
+      if (!items.length) continue;
+      container.createEl("h3", { text: label });
+      const list = container.createEl("ul");
+      for (const item of items) list.createEl("li", { text: item });
+    }
+  }
+  renderMarkdown(markdown, container) {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.markdownComponent = new import_obsidian3.Component();
+    this.markdownComponent.load();
+    void import_obsidian3.MarkdownRenderer.render(this.app, markdown, container, "", this.markdownComponent).catch((error) => {
+      this.showError(error instanceof Error ? error.message : String(error));
     });
   }
 };
@@ -1475,7 +1603,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.summarizeNote(path), commands);
+    await this.openPreview("Summarize note", () => commands.summarizeNote(path), commands);
   }
   async explainRelation(activePath, relatedPath, transport, vault) {
     var _a;
@@ -1483,26 +1611,24 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     const target = relatedPath != null ? relatedPath : (_a = this.index.related(activePath, 1)[0]) == null ? void 0 : _a.path;
     const commands = this.aiCommands(transport, vault);
     if (!target || !commands) return;
-    await this.openPreview(commands.explainRelation(activePath, target), commands);
+    await this.openPreview("Explain relation", () => commands.explainRelation(activePath, target), commands);
   }
   async extractStructure(transport, vault) {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.extractStructure(path), commands);
+    await this.openPreview("Extract structure", () => commands.extractStructure(path), commands);
   }
   async createNote(transport, vault) {
     const prompt = window.prompt("Create note from prompt");
     const commands = this.aiCommands(transport, vault);
     if (!prompt || !commands) return;
-    await this.openPreview(commands.createNote(prompt), commands);
+    await this.openPreview("Create note from prompt", () => commands.createNote(prompt), commands);
   }
-  async openPreview(previewPromise, commands) {
-    try {
-      new PreviewModal(this.app, await previewPromise, (preview) => commands.applyPreview(preview)).open();
-    } catch (error) {
-      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
-    }
+  async openPreview(title, request, commands) {
+    const modal = new PreviewModal(this.app, title, (preview) => commands.applyPreview(preview));
+    modal.open();
+    await runAiRequest(request, (state) => modal.setState(state));
   }
   aiCommands(transport, vault) {
     if (!this.pluginSettings.apiKey || !this.pluginSettings.model) {
