@@ -1027,6 +1027,13 @@ function registerSecondBrainCommands(plugin, actions, createRelatedView) {
   });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);
 }
+function ensureRelatedNotesView(workspace) {
+  workspace.onLayoutReady(() => {
+    if (workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE).length) return;
+    const leaf = workspace.getRightLeaf(false);
+    if (leaf) void leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: false });
+  });
+}
 function statusLabel(status) {
   if (status === "auth-required") return "Auth required";
   return status[0].toUpperCase() + status.slice(1);
@@ -1713,10 +1720,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       extractStructure: () => this.extractStructure(transport, vault),
       createNote: () => this.createNote(transport, vault)
     }, (leaf) => new RelatedNotesView(leaf, this.index, explainRelation));
-    if (!this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE).length) {
-      const leaf = this.app.workspace.getRightLeaf(false);
-      if (leaf) await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: false });
-    }
+    ensureRelatedNotesView(this.app.workspace);
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshRelatedView()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshRelatedView()));
     const scheduleSync = () => {

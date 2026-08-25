@@ -18,6 +18,12 @@ interface PluginCommandHost {
   registerView(type: string, creator: (leaf: WorkspaceLeaf) => unknown): unknown;
 }
 
+interface RelatedNotesWorkspace {
+  onLayoutReady(callback: () => void): void;
+  getLeavesOfType(type: string): unknown[];
+  getRightLeaf(split: boolean): { setViewState(state: { type: string; active: boolean }): void | Promise<void> } | null;
+}
+
 export function registerSecondBrainCommands(
   plugin: PluginCommandHost,
   actions: CommandActions,
@@ -34,6 +40,14 @@ export function registerSecondBrainCommands(
   for (const [id, name, callback] of commands) plugin.addCommand({ id, name, callback });
   plugin.addRibbonIcon("refresh-cw", "Sync Sken Brain", () => { void actions.syncNow(); });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);
+}
+
+export function ensureRelatedNotesView(workspace: RelatedNotesWorkspace): void {
+  workspace.onLayoutReady(() => {
+    if (workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE).length) return;
+    const leaf = workspace.getRightLeaf(false);
+    if (leaf) void leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: false });
+  });
 }
 
 export function statusLabel(status: SyncReport["status"]): string {

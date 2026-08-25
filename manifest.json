@@ -1,7 +1,7 @@
 {
   "id": "sken-brain",
   "name": "Sken Brain",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "minAppVersion": "1.5.0",
   "description": "A simple local-first second brain with Google Drive sync and optional AI assistance.",
   "author": "Ariel Febrian",

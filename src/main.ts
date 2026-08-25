@@ -18,7 +18,7 @@ import { AskVaultModal } from "./obsidian/ask-vault-modal.js";
 import { runAiRequest } from "./obsidian/ai-request.js";
 import { PreviewModal } from "./obsidian/preview-modal.js";
 import { RelatedNotesView } from "./obsidian/related-notes-view.js";
-import { RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands, syncNotice } from "./obsidian/plugin-wiring.js";
+import { ensureRelatedNotesView, RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands, syncNotice } from "./obsidian/plugin-wiring.js";
 import { SecondBrainSettingTab, normalizeSettings, type SecondBrainSettings } from "./obsidian/settings-tab.js";
 import { SyncStatusBar } from "./obsidian/status-bar.js";
 import { DataManifestStore } from "./sync/manifest-store.js";
@@ -82,10 +82,7 @@ export default class SecondBrainPlugin extends Plugin {
       extractStructure: () => this.extractStructure(transport, vault),
       createNote: () => this.createNote(transport, vault),
     }, (leaf) => new RelatedNotesView(leaf, this.index, explainRelation));
-    if (!this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE).length) {
-      const leaf = this.app.workspace.getRightLeaf(false);
-      if (leaf) await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: false });
-    }
+    ensureRelatedNotesView(this.app.workspace);
 
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshRelatedView()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshRelatedView()));

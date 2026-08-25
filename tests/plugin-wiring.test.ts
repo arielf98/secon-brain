@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ensureRelatedNotesView,
   registerSecondBrainCommands,
   RELATED_NOTES_VIEW_TYPE,
   statusLabel,
@@ -42,6 +43,27 @@ test("registers all user-facing commands and the Related Notes view", () => {
   assert.equal(ribbon?.title, "Sync Sken Brain");
   ribbon?.callback();
   assert.equal(syncCalls, 1);
+});
+
+test("waits for the workspace layout before creating the Related Notes view", async () => {
+  let onLayoutReady: (() => void) | undefined;
+  let rightLeafCalls = 0;
+  let viewState: unknown;
+  const workspace = {
+    onLayoutReady(callback: () => void): void { onLayoutReady = callback; },
+    getLeavesOfType(): unknown[] { return []; },
+    getRightLeaf(): { setViewState(state: unknown): Promise<void> } {
+      rightLeafCalls += 1;
+      return { setViewState: async (state) => { viewState = state; } };
+    },
+  };
+
+  ensureRelatedNotesView(workspace);
+  assert.equal(rightLeafCalls, 0);
+  onLayoutReady?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(rightLeafCalls, 1);
+  assert.deepEqual(viewState, { type: RELATED_NOTES_VIEW_TYPE, active: false });
 });
 
 test("maps sync states to short UI labels", () => {
