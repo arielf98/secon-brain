@@ -22,6 +22,7 @@ import { RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands } from "./obsidian
 import { SecondBrainSettingTab, normalizeSettings, type SecondBrainSettings } from "./obsidian/settings-tab.js";
 import { SyncStatusBar } from "./obsidian/status-bar.js";
 import { DataManifestStore } from "./sync/manifest-store.js";
+import { PluginUpdater } from "./sync/plugin-updater.js";
 import { SyncEngine } from "./sync/sync-engine.js";
 import type { SyncReport } from "./sync/sync-report.js";
 import { ObsidianVaultAdapter } from "./sync/vault-adapter.js";
@@ -118,7 +119,16 @@ export default class SecondBrainPlugin extends Plugin {
     try {
       const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
-      this.showReport(await engine.sync());
+      const report = await engine.sync();
+      if (report.status === "synced" || report.status === "conflict") {
+        try {
+          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId).sync();
+          if (updated.length) new Notice("Sken Brain plugin updated. Reload Obsidian to apply it.");
+        } catch (error) {
+          new Notice(`Sken Brain plugin update failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      this.showReport(report);
     } catch (error) {
       this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: [error instanceof Error ? error.message : String(error)] });
     }

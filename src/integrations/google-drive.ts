@@ -40,6 +40,7 @@ export interface DriveUploadResult {
 export interface GoogleDrive {
   listTree(rootId: string): Promise<RemoteFile[]>;
   download(driveId: string): Promise<Uint8Array>;
+  delete(driveId: string): Promise<void>;
   upload(path: string, bytes: Uint8Array, parentId: string, mimeType: string): Promise<DriveUploadResult>;
   update(driveId: string, bytes: Uint8Array, mimeType: string): Promise<DriveUploadResult>;
   ensureFolder(path: string, rootId: string): Promise<string>;
@@ -136,6 +137,10 @@ export class GoogleDriveClient implements GoogleDrive {
   async download(driveId: string): Promise<Uint8Array> {
     const response = await this.request({ method: "GET", url: `${DRIVE_API}/${encodeURIComponent(driveId)}?alt=media` });
     return new Uint8Array(response.body);
+  }
+
+  async delete(driveId: string): Promise<void> {
+    await this.request({ method: "DELETE", url: `${DRIVE_API}/${encodeURIComponent(driveId)}` });
   }
 
   async upload(path: string, bytes: Uint8Array, parentId: string, mimeType: string): Promise<DriveUploadResult> {

@@ -63,6 +63,16 @@ https://drive.google.com/drive/folders/FOLDER_ID
 
 the value after `/folders/` is the folder ID.
 
+For mobile plugin updates, place the current Sken Brain bundle under this Drive folder:
+
+```text
+obsidian/plugins/sken-brain/manifest.json
+obsidian/plugins/sken-brain/main.js
+obsidian/plugins/sken-brain/styles.css
+```
+
+Only those three bundle files are downloaded to `.obsidian/plugins/sken-brain/`. Plugin settings, OAuth tokens, and AI API keys are ignored. Reload Obsidian after the sync reports a plugin update.
+
 ## 5. Configure each Obsidian device
 
 Install and enable Sken Brain once on each desktop or mobile device. Then open **Settings → Sken Brain** and enter:
@@ -76,6 +86,6 @@ Keep sync paused while connecting a new device if its local vault already contai
 
 ## Sync and privacy behavior
 
-The plugin synchronizes normal vault files, including Markdown, images, PDFs, and other attachments. It excludes `.obsidian`, `.trash`, temporary files, plugin code, settings, OAuth tokens, and AI API keys.
+The plugin synchronizes normal vault files, including Markdown, images, PDFs, and other attachments. It excludes `.obsidian`, `.trash`, temporary files, plugin settings, OAuth tokens, and AI API keys. The separate plugin updater reads only the three Sken Brain bundle files described above.
 
 The existing three-way sync logic preserves concurrent edits under `_sync-conflicts/`. Network or authorization failures do not advance the local manifest baseline.

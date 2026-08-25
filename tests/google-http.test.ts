@@ -267,3 +267,16 @@ test("uploads multipart file content without losing the TextEncoder context", as
   assert.equal(result.driveId, "drive-file");
   assert.equal(transport.requests[0]?.method, "POST");
 });
+
+test("deletes a Drive file by id", async () => {
+  const transport = new FakeTransport((request) => {
+    assert.equal(request.method, "DELETE");
+    assert.equal(request.url, "https://www.googleapis.com/drive/v3/files/drive-file");
+    return { status: 204, headers: {}, body: new ArrayBuffer(0) };
+  });
+  const client = new GoogleDriveClient(transport, async () => "access-token");
+
+  await client.delete("drive-file");
+
+  assert.equal(transport.requests[0]?.headers?.Authorization, "Bearer access-token");
+});

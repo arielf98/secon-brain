@@ -10,7 +10,7 @@ Sken Brain synchronizes normal vault files between Obsidian desktop and mobile t
 
 ## Architecture
 
-The existing sync engine and Google Drive REST client remain unchanged. A small Cloudflare Worker replaces the desktop-only loopback OAuth flow for every platform.
+The existing sync engine handles user-file changes and deletion propagation, while a small Cloudflare Worker replaces the desktop-only loopback OAuth flow for every platform. A separate plugin updater handles the small Sken Brain bundle stored under `obsidian/plugins/sken-brain/`.
 
 1. The plugin opens the Worker's `/oauth/start` URL with a random device state.
 2. The Worker redirects to Google using a Web application OAuth client and a fixed HTTPS callback.
@@ -23,9 +23,9 @@ The Worker is stateless and needs no database, KV namespace, or paid Obsidian se
 
 ## Sync scope
 
-Sync includes Markdown, images, PDFs, and other user vault files. `.obsidian`, `.trash`, plugin code, plugin settings, OAuth tokens, API keys, locks, and temporary files remain excluded.
+Sync includes Markdown, images, PDFs, and other user vault files. `.obsidian`, `.trash`, plugin settings, OAuth tokens, API keys, locks, and temporary files remain excluded from normal vault sync. The plugin updater separately downloads only `manifest.json`, `main.js`, and `styles.css` from `obsidian/plugins/sken-brain/` into the local `.obsidian/plugins/sken-brain/` folder.
 
-Each device uses the same Drive folder ID but keeps its own OAuth token, sync manifest, and device ID. The existing three-way planner continues to handle upload, download, offline recovery, and conflict copies.
+Each device uses the same Drive folder ID but keeps its own OAuth token, sync manifest, and device ID. The existing three-way planner handles upload, download, deletion propagation, offline recovery, and conflict copies.
 
 ## Platform behavior
 
@@ -56,5 +56,5 @@ The repository contains a Worker entrypoint and `wrangler.toml`. The user create
 - Obsidian can install it on desktop, Android, and iOS.
 - Desktop and mobile can authorize through the same Worker.
 - Both platforms can upload and download files through the existing Drive sync engine.
-- `.obsidian`, credentials, and plugin artifacts are never synchronized.
+- `.obsidian` settings and credentials are never synchronized; only the three allowlisted Sken Brain bundle files are downloaded from the dedicated plugin path.
 - Worker route tests, auth client tests, the existing sync tests, typecheck, and production build pass.
