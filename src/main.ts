@@ -33,7 +33,6 @@ export default class SecondBrainPlugin extends Plugin {
   private index!: NoteIndex;
   private watcher?: ObsidianIndexWatcher;
   private statusBar?: SyncStatusBar;
-  private syncTimer?: ReturnType<typeof setTimeout>;
   private googleAuthClient!: WorkerGoogleAuth;
   private readonly syncGate = new SyncGate();
 
@@ -48,7 +47,7 @@ export default class SecondBrainPlugin extends Plugin {
     const vault = new ObsidianVaultAdapter(this.app);
     this.googleAuthClient = this.googleAuth(transport);
     this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
-      void this.completeGoogleAuthorization(params, transport, vault);
+      void this.completeGoogleAuthorization(params, transport);
     });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
@@ -86,23 +85,7 @@ export default class SecondBrainPlugin extends Plugin {
 
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshRelatedView()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshRelatedView()));
-    const scheduleSync = (): void => {
-      if (this.pluginSettings.paused || !this.pluginSettings.googleToken) return;
-      if (this.syncTimer) clearTimeout(this.syncTimer);
-      this.syncTimer = setTimeout(() => {
-        this.syncTimer = undefined;
-        void this.syncNow(transport, vault, false);
-      }, 1000);
-    };
-    this.registerEvent(this.app.vault.on("create", scheduleSync));
-    this.registerEvent(this.app.vault.on("modify", scheduleSync));
-    this.registerEvent(this.app.vault.on("delete", scheduleSync));
-    this.registerEvent(this.app.vault.on("rename", scheduleSync));
-    this.registerInterval(window.setInterval(() => {
-      if (!this.pluginSettings.paused) void this.syncNow(transport, vault, false);
-    }, Math.max(1, this.pluginSettings.syncIntervalMinutes) * 60_000));
     this.refreshRelatedView();
-    if (this.pluginSettings.googleToken) void this.syncNow(transport, vault, false);
   }
 
   private async syncNow(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter, notify = true): Promise<void> {
@@ -221,12 +204,10 @@ export default class SecondBrainPlugin extends Plugin {
   private async completeGoogleAuthorization(
     params: ObsidianProtocolData,
     transport: ObsidianRequestTransport,
-    vault: ObsidianVaultAdapter,
   ): Promise<void> {
     try {
       await this.googleAuthClient.completeAuthorization(params);
       new Notice("Google Drive authorized.");
-      await this.syncNow(transport, vault);
     } catch (error) {
       new Notice(error instanceof Error ? error.message : String(error));
     }

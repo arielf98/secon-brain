@@ -14,6 +14,7 @@ const text = (value: ArrayBuffer): string => new TextDecoder().decode(value);
 
 class FakeVault implements VaultAdapter {
   readonly files = new Map<string, ArrayBuffer>();
+  modifiedAt = 1;
 
   constructor(initial: Record<string, string>) {
     for (const [path, value] of Object.entries(initial)) this.files.set(path, bytes(value));
@@ -24,7 +25,7 @@ class FakeVault implements VaultAdapter {
       path,
       hash: await sha256(data),
       size: data.byteLength,
-      modifiedAt: 1,
+      modifiedAt: this.modifiedAt,
     })));
   }
 
@@ -209,20 +210,34 @@ test("deletes a local file after a remote deletion", async () => {
   assert.deepEqual(manifest.snapshot(), {});
 });
 
-test("writes a remote conflict copy without replacing the local original", async () => {
+test("uploads the latest local edit over the remote file", async () => {
   const oldLocalHash = await sha256(bytes("old"));
   const vault = new FakeVault({ "Notes/idea.md": "new local" });
   const drive = new FakeDrive({ "Notes/idea.md": { hash: "remote-new", content: "new remote" } });
+  vault.modifiedAt = 20;
+  drive.files.get("Notes/idea.md")!.remote.modifiedAt = 10;
   const manifest = new MemoryManifest({ "Notes/idea.md": baseEntry(oldLocalHash, "remote-old") });
 
   const report = await engineFor(vault, drive, manifest).sync();
 
-  assert.equal(report.status, "conflict");
-  assert.deepEqual(report.conflicts, ["Notes/idea.md"]);
-  assert.equal(text(await vault.read("Notes/idea.md")), "new local");
-  const conflictPath = [...vault.files.keys()].find((path) => path.startsWith("_sync-conflicts/"));
-  assert.ok(conflictPath);
-  assert.equal(text(await vault.read(conflictPath!)), "new remote");
+  assert.equal(report.status, "synced");
+  assert.deepEqual(report.uploaded, ["Notes/idea.md"]);
+  assert.equal(text([...drive.files.values()][0]!.data), "new local");
+});
+
+test("downloads the latest remote edit over the local file", async () => {
+  const oldLocalHash = await sha256(bytes("old"));
+  const vault = new FakeVault({ "Notes/idea.md": "new local" });
+  const drive = new FakeDrive({ "Notes/idea.md": { hash: "remote-new", content: "new remote" } });
+  vault.modifiedAt = 10;
+  drive.files.get("Notes/idea.md")!.remote.modifiedAt = 20;
+  const manifest = new MemoryManifest({ "Notes/idea.md": baseEntry(oldLocalHash, "remote-old") });
+
+  const report = await engineFor(vault, drive, manifest).sync();
+
+  assert.equal(report.status, "synced");
+  assert.deepEqual(report.downloaded, ["Notes/idea.md"]);
+  assert.equal(text(await vault.read("Notes/idea.md")), "new remote");
 });
 
 test("returns offline and preserves the previous manifest when inventory fails", async () => {

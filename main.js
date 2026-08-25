@@ -1112,7 +1112,6 @@ var DEFAULT_SETTINGS = {
   apiKey: "",
   baseUrl: "",
   model: "gpt-4o-mini",
-  syncIntervalMinutes: 5,
   conflictFolder: "_sync-conflicts",
   maxContextChars: 12e3,
   maxOutputTokens: 800,
@@ -1126,7 +1125,6 @@ function normalizeSettings(value) {
     ...DEFAULT_SETTINGS,
     ...settings,
     provider: settings.provider === "deepseek" ? "deepseek" : "openai",
-    syncIntervalMinutes: positiveNumber(settings.syncIntervalMinutes, DEFAULT_SETTINGS.syncIntervalMinutes),
     maxContextChars: positiveNumber(settings.maxContextChars, DEFAULT_SETTINGS.maxContextChars),
     maxOutputTokens: positiveNumber(settings.maxOutputTokens, DEFAULT_SETTINGS.maxOutputTokens)
   };
@@ -1157,7 +1155,6 @@ var SecondBrainSettingTab = class extends import_obsidian5.PluginSettingTab {
     });
     new import_obsidian5.Setting(containerEl).setName("Base URL").setDesc("Optional OpenAI-compatible API base URL.").addText((text) => text.setValue(settings.baseUrl).onChange((value) => update({ baseUrl: value.trim() })));
     new import_obsidian5.Setting(containerEl).setName("Model").addText((text) => text.setValue(settings.model).onChange((value) => update({ model: value.trim() })));
-    new import_obsidian5.Setting(containerEl).setName("Sync interval (minutes)").addText((text) => text.setValue(String(settings.syncIntervalMinutes)).onChange((value) => update({ syncIntervalMinutes: positiveNumber(Number(value), settings.syncIntervalMinutes) })));
     new import_obsidian5.Setting(containerEl).setName("Conflict folder").addText((text) => text.setValue(settings.conflictFolder).onChange((value) => update({ conflictFolder: value.trim() || DEFAULT_SETTINGS.conflictFolder })));
     new import_obsidian5.Setting(containerEl).setName("Maximum AI context characters").addText((text) => text.setValue(String(settings.maxContextChars)).onChange((value) => update({ maxContextChars: positiveNumber(Number(value), settings.maxContextChars) })));
     new import_obsidian5.Setting(containerEl).setName("Maximum AI output tokens").addText((text) => text.setValue(String(settings.maxOutputTokens)).onChange((value) => update({ maxOutputTokens: positiveNumber(Number(value), settings.maxOutputTokens) })));
@@ -1347,6 +1344,7 @@ function planSync(snapshot, deviceId, now) {
       if (!local && remote) return { type: "download", path, remote, reason: "new-remote-file" };
       if (!local && !remote) return { type: "skip", path, reason: "unchanged" };
       if ((local == null ? void 0 : local.hash) === (remote == null ? void 0 : remote.hash)) return { type: "skip", path, reason: "same-new-file" };
+      if (local && remote) return latestWins(path, local, remote);
       return {
         type: "conflict",
         path,
@@ -1363,13 +1361,7 @@ function planSync(snapshot, deviceId, now) {
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
       if (localChanged && !remoteChanged) return { type: "upload", path, reason: "changed-locally" };
       if (!localChanged && remoteChanged) return { type: "download", path, remote, reason: "changed-remotely" };
-      return {
-        type: "conflict",
-        path,
-        remote,
-        conflictPath: makeConflictPath(path, deviceId, now),
-        reason: "changed-on-both-sides"
-      };
+      return latestWins(path, local, remote);
     }
     if (!local && remote) {
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
@@ -1390,6 +1382,12 @@ function planSync(snapshot, deviceId, now) {
     }
     return { type: "skip", path, reason: "unchanged" };
   });
+}
+function latestWins(path, local, remote) {
+  if (local.modifiedAt >= remote.modifiedAt) {
+    return { type: "upload", path, remote, reason: "local-latest-wins" };
+  }
+  return { type: "download", path, remote, reason: "remote-latest-wins" };
 }
 
 // src/sync/sync-engine.ts
@@ -1682,7 +1680,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     const vault = new ObsidianVaultAdapter(this.app);
     this.googleAuthClient = this.googleAuth(transport);
     this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
-      void this.completeGoogleAuthorization(params, transport, vault);
+      void this.completeGoogleAuthorization(params, transport);
     });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
@@ -1723,23 +1721,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     ensureRelatedNotesView(this.app.workspace);
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshRelatedView()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshRelatedView()));
-    const scheduleSync = () => {
-      if (this.pluginSettings.paused || !this.pluginSettings.googleToken) return;
-      if (this.syncTimer) clearTimeout(this.syncTimer);
-      this.syncTimer = setTimeout(() => {
-        this.syncTimer = void 0;
-        void this.syncNow(transport, vault, false);
-      }, 1e3);
-    };
-    this.registerEvent(this.app.vault.on("create", scheduleSync));
-    this.registerEvent(this.app.vault.on("modify", scheduleSync));
-    this.registerEvent(this.app.vault.on("delete", scheduleSync));
-    this.registerEvent(this.app.vault.on("rename", scheduleSync));
-    this.registerInterval(window.setInterval(() => {
-      if (!this.pluginSettings.paused) void this.syncNow(transport, vault, false);
-    }, Math.max(1, this.pluginSettings.syncIntervalMinutes) * 6e4));
     this.refreshRelatedView();
-    if (this.pluginSettings.googleToken) void this.syncNow(transport, vault, false);
   }
   async syncNow(transport, vault, notify = true) {
     const started = await this.syncGate.run(() => this.performSync(transport, vault, notify));
@@ -1841,11 +1823,10 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
     }
   }
-  async completeGoogleAuthorization(params, transport, vault) {
+  async completeGoogleAuthorization(params, transport) {
     try {
       await this.googleAuthClient.completeAuthorization(params);
       new import_obsidian6.Notice("Google Drive authorized.");
-      await this.syncNow(transport, vault);
     } catch (error) {
       new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
     }

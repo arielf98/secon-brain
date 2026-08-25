@@ -11,7 +11,6 @@ export interface SecondBrainSettings {
   apiKey: string;
   baseUrl: string;
   model: string;
-  syncIntervalMinutes: number;
   conflictFolder: string;
   maxContextChars: number;
   maxOutputTokens: number;
@@ -26,7 +25,6 @@ export const DEFAULT_SETTINGS: SecondBrainSettings = {
   apiKey: "",
   baseUrl: "",
   model: "gpt-4o-mini",
-  syncIntervalMinutes: 5,
   conflictFolder: "_sync-conflicts",
   maxContextChars: 12000,
   maxOutputTokens: 800,
@@ -43,7 +41,6 @@ export function normalizeSettings(value: unknown): SecondBrainSettings {
     ...DEFAULT_SETTINGS,
     ...settings,
     provider: settings.provider === "deepseek" ? "deepseek" : "openai",
-    syncIntervalMinutes: positiveNumber(settings.syncIntervalMinutes, DEFAULT_SETTINGS.syncIntervalMinutes),
     maxContextChars: positiveNumber(settings.maxContextChars, DEFAULT_SETTINGS.maxContextChars),
     maxOutputTokens: positiveNumber(settings.maxOutputTokens, DEFAULT_SETTINGS.maxOutputTokens),
   };
@@ -111,9 +108,6 @@ export class SecondBrainSettingTab extends PluginSettingTab {
       .setName("Model")
       .addText((text) => text.setValue(settings.model).onChange((value) => update({ model: value.trim() })));
 
-    new Setting(containerEl)
-      .setName("Sync interval (minutes)")
-      .addText((text) => text.setValue(String(settings.syncIntervalMinutes)).onChange((value) => update({ syncIntervalMinutes: positiveNumber(Number(value), settings.syncIntervalMinutes) })));
     new Setting(containerEl)
       .setName("Conflict folder")
       .addText((text) => text.setValue(settings.conflictFolder).onChange((value) => update({ conflictFolder: value.trim() || DEFAULT_SETTINGS.conflictFolder })));
