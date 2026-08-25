@@ -6,6 +6,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "dev": "node esbuild.config.mjs --watch",
+    "deploy": "node esbuild.config.mjs --deploy-to /Users/erythrina/Documents/tes-vault/.obsidian/plugins/sken-brain",
+    "dev:deploy": "node esbuild.config.mjs --watch --deploy-to /Users/erythrina/Documents/tes-vault/.obsidian/plugins/sken-brain",
     "build:test": "esbuild tests/*.test.ts --bundle --platform=node --format=esm --outdir=.test-dist",
     "test": "npm run build:test && node --test .test-dist/*.test.js"
   },
