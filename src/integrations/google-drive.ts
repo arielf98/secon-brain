@@ -171,6 +171,7 @@ export class GoogleDriveClient implements GoogleDrive {
   }
 
   async ensureFolder(path: string, rootId: string): Promise<string> {
+    if (!path) return rootId;
     let parentId = rootId;
     const parts = normalizeVaultPath(path).split("/").filter(Boolean);
     for (const part of parts) {

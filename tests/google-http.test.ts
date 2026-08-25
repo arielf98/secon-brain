@@ -235,3 +235,13 @@ test("lists a Drive folder tree with stable relative paths", async () => {
   assert.match(transport.requests[0]?.url ?? "", /trashed\+%3D\+false|trashed%20%3D%20false/);
   assert.equal(transport.requests[0]?.headers?.Authorization, "Bearer access-token");
 });
+
+test("keeps root-level uploads in the configured Drive folder", async () => {
+  const transport = new FakeTransport(() => {
+    throw new Error("root-level files should not create a subfolder");
+  });
+  const client = new GoogleDriveClient(transport, async () => "access-token");
+
+  assert.equal(await client.ensureFolder("", "drive-root"), "drive-root");
+  assert.equal(transport.requests.length, 0);
+});

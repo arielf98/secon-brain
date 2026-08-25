@@ -677,6 +677,7 @@ Content-Type: ${mimeType2}\r
     return { driveId: file.id, hash: remoteHash(file) };
   }
   async ensureFolder(path, rootId) {
+    if (!path) return rootId;
     let parentId = rootId;
     const parts = normalizeVaultPath(path).split("/").filter(Boolean);
     for (const part of parts) {
