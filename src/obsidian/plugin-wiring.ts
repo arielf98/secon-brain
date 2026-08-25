@@ -14,6 +14,7 @@ export interface CommandActions {
 
 interface PluginCommandHost {
   addCommand(command: { id: string; name: string; callback: () => void | Promise<void> }): unknown;
+  addRibbonIcon(icon: string, title: string, callback: () => void): unknown;
   registerView(type: string, creator: (leaf: WorkspaceLeaf) => unknown): unknown;
 }
 
@@ -31,6 +32,7 @@ export function registerSecondBrainCommands(
     ["sken-brain:create-note", "Create note from prompt", actions.createNote],
   ];
   for (const [id, name, callback] of commands) plugin.addCommand({ id, name, callback });
+  plugin.addRibbonIcon("refresh-cw", "Sync Sken Brain", () => { void actions.syncNow(); });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);
 }
 

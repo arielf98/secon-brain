@@ -11,13 +11,16 @@ import {
 test("registers all user-facing commands and the Related Notes view", () => {
   const commands: string[] = [];
   let viewType = "";
+  let ribbon: { icon: string; title: string; callback: () => void } | undefined;
+  let syncCalls = 0;
   const plugin = {
     addCommand(command: { id: string }): void { commands.push(command.id); },
+    addRibbonIcon(icon: string, title: string, callback: () => void): void { ribbon = { icon, title, callback }; },
     registerView(type: string): void { viewType = type; },
   };
 
   registerSecondBrainCommands(plugin, {
-    syncNow: () => undefined,
+    syncNow: () => { syncCalls += 1; },
     askVault: () => undefined,
     summarizeNote: () => undefined,
     explainRelation: () => undefined,
@@ -34,6 +37,10 @@ test("registers all user-facing commands and the Related Notes view", () => {
     "sken-brain:create-note",
   ]);
   assert.equal(viewType, RELATED_NOTES_VIEW_TYPE);
+  assert.equal(ribbon?.icon, "refresh-cw");
+  assert.equal(ribbon?.title, "Sync Sken Brain");
+  ribbon?.callback();
+  assert.equal(syncCalls, 1);
 });
 
 test("maps sync states to short UI labels", () => {

@@ -1022,6 +1022,9 @@ function registerSecondBrainCommands(plugin, actions, createRelatedView) {
     ["sken-brain:create-note", "Create note from prompt", actions.createNote]
   ];
   for (const [id, name, callback] of commands) plugin.addCommand({ id, name, callback });
+  plugin.addRibbonIcon("refresh-cw", "Sync Sken Brain", () => {
+    void actions.syncNow();
+  });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);
 }
 function statusLabel(status) {
