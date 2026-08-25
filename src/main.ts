@@ -18,12 +18,13 @@ import { AskVaultModal } from "./obsidian/ask-vault-modal.js";
 import { runAiRequest } from "./obsidian/ai-request.js";
 import { PreviewModal } from "./obsidian/preview-modal.js";
 import { RelatedNotesView } from "./obsidian/related-notes-view.js";
-import { RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands } from "./obsidian/plugin-wiring.js";
+import { ensureRelatedNotesView, RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands, syncNotice } from "./obsidian/plugin-wiring.js";
 import { SecondBrainSettingTab, normalizeSettings, type SecondBrainSettings } from "./obsidian/settings-tab.js";
 import { SyncStatusBar } from "./obsidian/status-bar.js";
 import { DataManifestStore } from "./sync/manifest-store.js";
-import { PluginUpdater } from "./sync/plugin-updater.js";
+import { PluginUpdater, type PluginSyncState } from "./sync/plugin-updater.js";
 import { SyncEngine } from "./sync/sync-engine.js";
+import { SyncGate } from "./sync/sync-gate.js";
 import type { SyncReport } from "./sync/sync-report.js";
 import { ObsidianVaultAdapter } from "./sync/vault-adapter.js";
 
@@ -32,8 +33,8 @@ export default class SecondBrainPlugin extends Plugin {
   private index!: NoteIndex;
   private watcher?: ObsidianIndexWatcher;
   private statusBar?: SyncStatusBar;
-  private syncTimer?: ReturnType<typeof setTimeout>;
   private googleAuthClient!: WorkerGoogleAuth;
+  private readonly syncGate = new SyncGate();
 
   async onload(): Promise<void> {
     this.pluginSettings = normalizeSettings(await this.loadData());
@@ -46,7 +47,7 @@ export default class SecondBrainPlugin extends Plugin {
     const vault = new ObsidianVaultAdapter(this.app);
     this.googleAuthClient = this.googleAuth(transport);
     this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
-      void this.completeGoogleAuthorization(params, transport, vault);
+      void this.completeGoogleAuthorization(params, transport);
     });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
@@ -80,40 +81,26 @@ export default class SecondBrainPlugin extends Plugin {
       extractStructure: () => this.extractStructure(transport, vault),
       createNote: () => this.createNote(transport, vault),
     }, (leaf) => new RelatedNotesView(leaf, this.index, explainRelation));
-    if (!this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE).length) {
-      const leaf = this.app.workspace.getRightLeaf(false);
-      if (leaf) await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: false });
-    }
+    ensureRelatedNotesView(this.app.workspace);
 
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshRelatedView()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshRelatedView()));
-    const scheduleSync = (): void => {
-      if (this.pluginSettings.paused || !this.pluginSettings.googleToken) return;
-      if (this.syncTimer) clearTimeout(this.syncTimer);
-      this.syncTimer = setTimeout(() => {
-        this.syncTimer = undefined;
-        void this.syncNow(transport, vault);
-      }, 1000);
-    };
-    this.registerEvent(this.app.vault.on("create", scheduleSync));
-    this.registerEvent(this.app.vault.on("modify", scheduleSync));
-    this.registerEvent(this.app.vault.on("delete", scheduleSync));
-    this.registerEvent(this.app.vault.on("rename", scheduleSync));
-    this.registerInterval(window.setInterval(() => {
-      if (!this.pluginSettings.paused) void this.syncNow(transport, vault);
-    }, Math.max(1, this.pluginSettings.syncIntervalMinutes) * 60_000));
     this.refreshRelatedView();
-    if (this.pluginSettings.googleToken) void this.syncNow(transport, vault);
   }
 
-  private async syncNow(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
+  private async syncNow(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter, notify = true): Promise<void> {
+    const started = await this.syncGate.run(() => this.performSync(transport, vault, notify));
+    if (!started && notify) new Notice("Sken Brain sync is already running.");
+  }
+
+  private async performSync(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter, notify: boolean): Promise<void> {
     if (this.pluginSettings.paused) return;
     if (!this.pluginSettings.syncServiceUrl || !this.pluginSettings.driveFolderId) {
-      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure the sync service URL and Drive folder ID first"] });
+      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure the sync service URL and Drive folder ID first"] }, notify);
       return;
     }
     if (!this.pluginSettings.googleToken) {
-      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: ["Authorize Google Drive in Sken Brain settings"] });
+      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: ["Authorize Google Drive in Sken Brain settings"] }, notify);
       return;
     }
     try {
@@ -123,7 +110,13 @@ export default class SecondBrainPlugin extends Plugin {
       if (report.status === "synced" || report.status === "conflict") {
         try {
           const mode = Platform.isDesktopApp ? "publish" : "download";
-          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId, { mode }).sync();
+          const updated = await new PluginUpdater(
+            vault,
+            drive,
+            this.pluginSettings.driveFolderId,
+            { mode },
+            this.pluginSyncStateStore(),
+          ).sync();
           if (updated.length) {
             new Notice(mode === "publish"
               ? "Sken Brain plugin bundle published to Google Drive."
@@ -133,9 +126,9 @@ export default class SecondBrainPlugin extends Plugin {
           new Notice(`Sken Brain plugin update failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      this.showReport(report);
+      this.showReport(report, notify);
     } catch (error) {
-      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: [error instanceof Error ? error.message : String(error)] });
+      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: [error instanceof Error ? error.message : String(error)] }, notify);
     }
   }
 
@@ -211,12 +204,10 @@ export default class SecondBrainPlugin extends Plugin {
   private async completeGoogleAuthorization(
     params: ObsidianProtocolData,
     transport: ObsidianRequestTransport,
-    vault: ObsidianVaultAdapter,
   ): Promise<void> {
     try {
       await this.googleAuthClient.completeAuthorization(params);
       new Notice("Google Drive authorized.");
-      await this.syncNow(transport, vault);
     } catch (error) {
       new Notice(error instanceof Error ? error.message : String(error));
     }
@@ -266,6 +257,26 @@ export default class SecondBrainPlugin extends Plugin {
     );
   }
 
+  private pluginSyncStateStore(): {
+    load(): Promise<Record<string, PluginSyncState>>;
+    save(state: Record<string, PluginSyncState>): Promise<void>;
+  } {
+    return {
+      load: async () => {
+        const data = await this.loadData();
+        if (!data || typeof data !== "object") return {};
+        const value = (data as { pluginSync?: unknown }).pluginSync;
+        return value && typeof value === "object" ? value as Record<string, PluginSyncState> : {};
+      },
+      save: async (state) => {
+        const data = await this.loadData();
+        const next = data && typeof data === "object" ? { ...(data as Record<string, unknown>) } : {};
+        next.pluginSync = state;
+        await this.saveData(next);
+      },
+    };
+  }
+
   private async saveSettings(): Promise<void> {
     const data = await this.loadData();
     const next = data && typeof data === "object" ? { ...(data as Record<string, unknown>) } : {};
@@ -286,10 +297,9 @@ export default class SecondBrainPlugin extends Plugin {
     this.relatedView()?.refresh(this.activePath() ?? "");
   }
 
-  private showReport(report: SyncReport): void {
+  private showReport(report: SyncReport, notify = true): void {
     this.statusBar?.setReport(report);
-    if (report.status === "conflict") new Notice(`Sync conflict: ${report.conflicts.length} file(s)`);
-    if (report.status === "auth-required") new Notice("Google Drive authorization is required.");
+    if (notify) new Notice(syncNotice(report));
   }
 }
 

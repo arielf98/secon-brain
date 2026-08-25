@@ -32,6 +32,7 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
       if (!local && remote) return { type: "download", path, remote, reason: "new-remote-file" };
       if (!local && !remote) return { type: "skip", path, reason: "unchanged" };
       if (local?.hash === remote?.hash) return { type: "skip", path, reason: "same-new-file" };
+      if (local && remote) return latestWins(path, local, remote);
       return {
         type: "conflict",
         path,
@@ -51,13 +52,7 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
       if (localChanged && !remoteChanged) return { type: "upload", path, reason: "changed-locally" };
       if (!localChanged && remoteChanged) return { type: "download", path, remote, reason: "changed-remotely" };
-      return {
-        type: "conflict",
-        path,
-        remote,
-        conflictPath: makeConflictPath(path, deviceId, now),
-        reason: "changed-on-both-sides",
-      };
+      return latestWins(path, local, remote);
     }
 
     if (!local && remote) {
@@ -81,4 +76,11 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
 
     return { type: "skip", path, reason: "unchanged" };
   });
+}
+
+function latestWins(path: string, local: FileSnapshot, remote: RemoteFile): SyncAction {
+  if (local.modifiedAt >= remote.modifiedAt) {
+    return { type: "upload", path, remote, reason: "local-latest-wins" };
+  }
+  return { type: "download", path, remote, reason: "remote-latest-wins" };
 }

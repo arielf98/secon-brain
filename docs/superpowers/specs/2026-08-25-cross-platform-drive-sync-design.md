@@ -6,7 +6,7 @@
 
 ## Goal
 
-Sken Brain synchronizes normal vault files between Obsidian desktop and mobile through one Google Drive folder. The plugin remains local-first: files are edited locally, Google Drive is the remote mirror, and conflicts are preserved instead of overwritten.
+Sken Brain synchronizes normal vault files between Obsidian desktop and mobile through one Google Drive folder. The plugin remains local-first: files are edited locally, Google Drive is the remote mirror, and same-file conflicts are resolved by latest modified time.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ The Worker is stateless and needs no database, KV namespace, or paid Obsidian se
 
 Sync includes Markdown, images, PDFs, and other user vault files. `.obsidian`, `.trash`, plugin settings, OAuth tokens, API keys, locks, and temporary files remain excluded from normal vault sync. The plugin updater separately publishes or downloads only `manifest.json`, `main.js`, and `styles.css` between `obsidian/plugins/sken-brain/` and the local `.obsidian/plugins/sken-brain/` folder.
 
-Each device uses the same Drive folder ID but keeps its own OAuth token, sync manifest, and device ID. The existing three-way planner handles upload, download, deletion propagation, offline recovery, and conflict copies.
+Each device uses the same Drive folder ID but keeps its own OAuth token, sync manifest, and device ID. The existing three-way planner handles upload, download, deletion propagation, offline recovery, and latest-modified-file conflict resolution. Delete-vs-edit cases remain conflicts because deletion time is not recorded.
 
 ## Platform behavior
 

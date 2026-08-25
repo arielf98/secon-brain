@@ -2,22 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ensureRelatedNotesView,
   registerSecondBrainCommands,
   RELATED_NOTES_VIEW_TYPE,
   statusLabel,
+  syncNotice,
   statusSummary,
 } from "../src/obsidian/plugin-wiring.js";
 
 test("registers all user-facing commands and the Related Notes view", () => {
   const commands: string[] = [];
   let viewType = "";
+  let ribbon: { icon: string; title: string; callback: () => void } | undefined;
+  let syncCalls = 0;
   const plugin = {
     addCommand(command: { id: string }): void { commands.push(command.id); },
+    addRibbonIcon(icon: string, title: string, callback: () => void): void { ribbon = { icon, title, callback }; },
     registerView(type: string): void { viewType = type; },
   };
 
   registerSecondBrainCommands(plugin, {
-    syncNow: () => undefined,
+    syncNow: () => { syncCalls += 1; },
     askVault: () => undefined,
     summarizeNote: () => undefined,
     explainRelation: () => undefined,
@@ -34,6 +39,31 @@ test("registers all user-facing commands and the Related Notes view", () => {
     "sken-brain:create-note",
   ]);
   assert.equal(viewType, RELATED_NOTES_VIEW_TYPE);
+  assert.equal(ribbon?.icon, "refresh-cw");
+  assert.equal(ribbon?.title, "Sync Sken Brain");
+  ribbon?.callback();
+  assert.equal(syncCalls, 1);
+});
+
+test("waits for the workspace layout before creating the Related Notes view", async () => {
+  let onLayoutReady: (() => void) | undefined;
+  let rightLeafCalls = 0;
+  let viewState: unknown;
+  const workspace = {
+    onLayoutReady(callback: () => void): void { onLayoutReady = callback; },
+    getLeavesOfType(): unknown[] { return []; },
+    getRightLeaf(): { setViewState(state: unknown): Promise<void> } {
+      rightLeafCalls += 1;
+      return { setViewState: async (state) => { viewState = state; } };
+    },
+  };
+
+  ensureRelatedNotesView(workspace);
+  assert.equal(rightLeafCalls, 0);
+  onLayoutReady?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(rightLeafCalls, 1);
+  assert.deepEqual(viewState, { type: RELATED_NOTES_VIEW_TYPE, active: false });
 });
 
 test("maps sync states to short UI labels", () => {
@@ -48,9 +78,10 @@ test("shows sync counts and errors in the status summary", () => {
     status: "synced",
     uploaded: ["note.md", "image.png"],
     downloaded: ["remote.md"],
+    deleted: ["old.md"],
     conflicts: [],
     errors: [],
-  }), "Synced · 2 uploaded · 1 downloaded");
+  }), "Synced · 2 uploaded · 1 downloaded · 1 deleted");
   assert.equal(statusSummary({
     status: "offline",
     uploaded: [],
@@ -58,4 +89,39 @@ test("shows sync counts and errors in the status summary", () => {
     conflicts: [],
     errors: ["Drive folder was not found"],
   }), "Offline · Drive folder was not found");
+});
+
+test("formats a visible notice for every sync result", () => {
+  assert.equal(syncNotice({
+    status: "synced",
+    uploaded: [],
+    downloaded: [],
+    deleted: [],
+    conflicts: [],
+    errors: [],
+  }), "Sync complete · No changes");
+  assert.equal(syncNotice({
+    status: "synced",
+    uploaded: ["note.md"],
+    downloaded: ["remote.md"],
+    deleted: ["old.md"],
+    conflicts: [],
+    errors: [],
+  }), "Sync complete · 1 uploaded · 1 downloaded · 1 deleted");
+  assert.equal(syncNotice({
+    status: "offline",
+    uploaded: [],
+    downloaded: [],
+    deleted: [],
+    conflicts: [],
+    errors: ["Drive folder was not found"],
+  }), "Sync offline · Drive folder was not found");
+  assert.equal(syncNotice({
+    status: "conflict",
+    uploaded: [],
+    downloaded: [],
+    deleted: [],
+    conflicts: ["a.md", "b.md"],
+    errors: [],
+  }), "Sync conflict · 2 file(s)");
 });

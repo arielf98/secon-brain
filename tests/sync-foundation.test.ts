@@ -33,15 +33,15 @@ test("hash is stable and hexadecimal", async () => {
   );
 });
 
-const localFile = (path: string, hash: string): FileSnapshot => ({
+const localFile = (path: string, hash: string, modifiedAt = 1): FileSnapshot => ({
   path,
   hash,
   size: hash.length,
-  modifiedAt: 1,
+  modifiedAt,
 });
 
-const remoteFile = (path: string, hash: string): RemoteFile => ({
-  ...localFile(path, hash),
+const remoteFile = (path: string, hash: string, modifiedAt = 1): RemoteFile => ({
+  ...localFile(path, hash, modifiedAt),
   driveId: `drive-${path}`,
   mimeType: "text/markdown",
 });
@@ -82,19 +82,33 @@ test("plans a remote-only edit as a download", () => {
   }]);
 });
 
-test("plans edits on both sides as a conflict", () => {
+test("lets the latest local edit replace the remote file", () => {
   const actions = planSync({
-    local: { "Notes/idea.md": localFile("Notes/idea.md", "local") },
-    remote: { "Notes/idea.md": remoteFile("Notes/idea.md", "remote") },
+    local: { "Notes/idea.md": localFile("Notes/idea.md", "local", 20) },
+    remote: { "Notes/idea.md": remoteFile("Notes/idea.md", "remote", 10) },
     base: { "Notes/idea.md": baseFile("Notes/idea.md", "base") },
   }, "laptop", 1700000000000);
 
   assert.deepEqual(actions, [{
-    type: "conflict",
+    type: "upload",
     path: "Notes/idea.md",
-    remote: remoteFile("Notes/idea.md", "remote"),
-    conflictPath: "_sync-conflicts/Notes/idea (conflict-laptop-20231114-221320).md",
-    reason: "changed-on-both-sides",
+    remote: remoteFile("Notes/idea.md", "remote", 10),
+    reason: "local-latest-wins",
+  }]);
+});
+
+test("lets the latest remote edit replace the local file", () => {
+  const actions = planSync({
+    local: { "Notes/idea.md": localFile("Notes/idea.md", "local", 10) },
+    remote: { "Notes/idea.md": remoteFile("Notes/idea.md", "remote", 20) },
+    base: { "Notes/idea.md": baseFile("Notes/idea.md", "base") },
+  }, "laptop", 1700000000000);
+
+  assert.deepEqual(actions, [{
+    type: "download",
+    path: "Notes/idea.md",
+    remote: remoteFile("Notes/idea.md", "remote", 20),
+    reason: "remote-latest-wins",
   }]);
 });
 

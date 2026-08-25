@@ -36,6 +36,7 @@ export class SyncEngine {
       status: "synced",
       uploaded: [],
       downloaded: [],
+      deleted: [],
       conflicts: [],
       errors: [],
     };
@@ -101,12 +102,14 @@ export class SyncEngine {
 
     if (action.type === "delete-local") {
       await this.vault.delete(action.path);
+      report.deleted?.push(action.path);
       return;
     }
 
     if (action.type === "delete-remote") {
       if (!action.remote) throw new Error(`Missing remote file for delete: ${action.path}`);
       await this.retry(() => this.drive.delete(action.remote!.driveId));
+      report.deleted?.push(action.path);
       return;
     }
 
