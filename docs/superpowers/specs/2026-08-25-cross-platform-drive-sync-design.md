@@ -10,7 +10,7 @@ Sken Brain synchronizes normal vault files between Obsidian desktop and mobile t
 
 ## Architecture
 
-The existing sync engine handles user-file changes and deletion propagation, while a small Cloudflare Worker replaces the desktop-only loopback OAuth flow for every platform. A separate plugin updater handles the small Sken Brain bundle stored under `obsidian/plugins/sken-brain/`.
+The existing sync engine handles user-file changes and deletion propagation, while a small Cloudflare Worker replaces the desktop-only loopback OAuth flow for every platform. A separate plugin updater publishes the desktop Sken Brain bundle and downloads it on mobile from `obsidian/plugins/sken-brain/`.
 
 1. The plugin opens the Worker's `/oauth/start` URL with a random device state.
 2. The Worker redirects to Google using a Web application OAuth client and a fixed HTTPS callback.
@@ -23,7 +23,7 @@ The Worker is stateless and needs no database, KV namespace, or paid Obsidian se
 
 ## Sync scope
 
-Sync includes Markdown, images, PDFs, and other user vault files. `.obsidian`, `.trash`, plugin settings, OAuth tokens, API keys, locks, and temporary files remain excluded from normal vault sync. The plugin updater separately downloads only `manifest.json`, `main.js`, and `styles.css` from `obsidian/plugins/sken-brain/` into the local `.obsidian/plugins/sken-brain/` folder.
+Sync includes Markdown, images, PDFs, and other user vault files. `.obsidian`, `.trash`, plugin settings, OAuth tokens, API keys, locks, and temporary files remain excluded from normal vault sync. The plugin updater separately publishes or downloads only `manifest.json`, `main.js`, and `styles.css` between `obsidian/plugins/sken-brain/` and the local `.obsidian/plugins/sken-brain/` folder.
 
 Each device uses the same Drive folder ID but keeps its own OAuth token, sync manifest, and device ID. The existing three-way planner handles upload, download, deletion propagation, offline recovery, and conflict copies.
 

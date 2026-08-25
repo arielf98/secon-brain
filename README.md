@@ -4,7 +4,7 @@ Private, local-first Obsidian plugin for a simple second brain:
 
 - local vault remains the writing source of truth;
 - Google Drive mirrors user files across desktop and mobile devices;
-- the Sken Brain plugin bundle can be distributed from `obsidian/plugins/sken-brain/`;
+- desktop sync publishes the Sken Brain plugin bundle to `obsidian/plugins/sken-brain/` for mobile devices;
 - conflicts are preserved under `_sync-conflicts/`;
 - Related Notes are scored locally from note context, tags, links, folder, and recency;
 - Ask Vault, Explain relation, Summarize, Extract structure, and Create note use bounded local context;
@@ -39,7 +39,7 @@ In **Settings → Sken Brain**, select OpenAI or DeepSeek and enter the provider
 
 Sync runs after startup when a device is already authorized, after local vault changes with a short debounce, and on the configured interval. **Sync Now** is also available as a command and settings button. Remote deletes never silently erase a locally edited file. A network/auth failure leaves the previous manifest baseline unchanged.
 
-The normal vault sync excludes `.obsidian`, `.trash`, lock/temp files, plugin settings, tokens, and API keys. User Markdown, images, PDFs, and other attachments remain eligible. During a successful sync, only `manifest.json`, `main.js`, and `styles.css` are downloaded from the Drive path `obsidian/plugins/sken-brain/` into the local `.obsidian/plugins/sken-brain/` folder. Plugin settings and credentials are never synchronized. Reload Obsidian after a plugin update.
+The normal vault sync excludes `.obsidian`, `.trash`, lock/temp files, plugin settings, tokens, and API keys. User Markdown, images, PDFs, and other attachments remain eligible. During a successful desktop sync, the local `manifest.json`, `main.js`, and `styles.css` are published to `obsidian/plugins/sken-brain/`. Mobile sync downloads those files into `.obsidian/plugins/sken-brain/`. Plugin settings and credentials are never synchronized. Reload Obsidian after a mobile plugin update.
 
 ## Git workflow
 

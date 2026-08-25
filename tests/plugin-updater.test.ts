@@ -8,7 +8,7 @@ import { PluginUpdater } from "../src/sync/plugin-updater.js";
 import type { VaultAdapter } from "../src/sync/vault-adapter.js";
 
 const bytes = (value: string): ArrayBuffer => new TextEncoder().encode(value).buffer;
-const text = (value: ArrayBuffer): string => new TextDecoder().decode(value);
+const text = (value: ArrayBuffer | Uint8Array): string => new TextDecoder().decode(value instanceof Uint8Array ? value : new Uint8Array(value));
 
 class FakeVault implements VaultAdapter {
   readonly files = new Map<string, ArrayBuffer>();
@@ -45,6 +45,7 @@ class FakeVault implements VaultAdapter {
 
 class FakeDrive implements GoogleDrive {
   readonly files = new Map<string, { remote: RemoteFile; data: ArrayBuffer }>();
+  private nextId = 100;
 
   constructor(initial: Record<string, string>) {
     let id = 1;
@@ -74,12 +75,27 @@ class FakeDrive implements GoogleDrive {
     this.files.delete(entry[0]);
   }
 
-  async upload(_path: string, _data: Uint8Array, _parentId: string, _mimeType: string): Promise<DriveUploadResult> {
-    throw new Error("not used");
+  async upload(path: string, data: Uint8Array, _parentId: string, mimeType: string): Promise<DriveUploadResult> {
+    const driveId = `drive-${this.nextId++}`;
+    const content = data.slice().buffer;
+    const hash = await sha256(content);
+    this.files.set(path, {
+      remote: { path, hash, size: data.byteLength, modifiedAt: 2, driveId, mimeType },
+      data: content,
+    });
+    return { driveId, hash };
   }
 
-  async update(_driveId: string, _data: Uint8Array, _mimeType: string): Promise<DriveUploadResult> {
-    throw new Error("not used");
+  async update(driveId: string, data: Uint8Array, mimeType: string): Promise<DriveUploadResult> {
+    const entry = [...this.files.entries()].find(([, value]) => value.remote.driveId === driveId);
+    if (!entry) throw new Error(`missing remote file: ${driveId}`);
+    const [path, file] = entry;
+    const content = data.slice().buffer;
+    const hash = await sha256(content);
+    file.data = content;
+    file.remote = { ...file.remote, hash, size: data.byteLength, modifiedAt: 2, mimeType };
+    this.files.set(path, file);
+    return { driveId, hash };
   }
 
   async ensureFolder(): Promise<string> {
@@ -120,4 +136,27 @@ test("does not rewrite an unchanged Sken Brain bundle", async () => {
   const updated = await new PluginUpdater(vault, drive, "root").sync();
 
   assert.deepEqual(updated, []);
+});
+
+test("publishes the local Sken Brain bundle from desktop to Drive", async () => {
+  const vault = new FakeVault({
+    "obsidian/plugins/sken-brain/manifest.json": "local manifest",
+    "obsidian/plugins/sken-brain/main.js": "local main",
+    "obsidian/plugins/sken-brain/styles.css": "local styles",
+    "obsidian/plugins/sken-brain/data.json": "keep local settings",
+  });
+  const drive = new FakeDrive({
+    "obsidian/plugins/sken-brain/main.js": "old remote main",
+  });
+
+  const updated = await new PluginUpdater(vault, drive, "root", { mode: "publish" }).sync();
+
+  assert.deepEqual(updated, [
+    "obsidian/plugins/sken-brain/main.js",
+    "obsidian/plugins/sken-brain/manifest.json",
+    "obsidian/plugins/sken-brain/styles.css",
+  ]);
+  assert.equal(text(await drive.download(drive.files.get("obsidian/plugins/sken-brain/main.js")!.remote.driveId)), "local main");
+  assert.equal(text(await drive.download(drive.files.get("obsidian/plugins/sken-brain/manifest.json")!.remote.driveId)), "local manifest");
+  assert.equal(drive.files.has("obsidian/plugins/sken-brain/data.json"), false);
 });

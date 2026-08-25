@@ -151,7 +151,8 @@ var TEMP_FILE_PATTERNS = [/~$/, /\.swp$/i, /\.tmp$/i, /\.lock$/i];
 var PLUGIN_REMOTE_PREFIX = "obsidian/plugins/";
 var PLUGIN_REMOTE_ROOT = "obsidian/plugins/sken-brain/";
 var PLUGIN_LOCAL_ROOT = ".obsidian/plugins/sken-brain/";
-var PLUGIN_FILES = /* @__PURE__ */ new Set(["manifest.json", "main.js", "styles.css"]);
+var SKEN_BRAIN_PLUGIN_FILES = ["manifest.json", "main.js", "styles.css"];
+var PLUGIN_FILES = new Set(SKEN_BRAIN_PLUGIN_FILES);
 function normalizeVaultPath(path) {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "");
   const clean = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".").join("/");
@@ -661,9 +662,9 @@ var GoogleDriveClient = class {
   async delete(driveId) {
     await this.request({ method: "DELETE", url: `${DRIVE_API}/${encodeURIComponent(driveId)}` });
   }
-  async upload(path, bytes, parentId, mimeType2) {
+  async upload(path, bytes, parentId, mimeType3) {
     const boundary = `second-brain-${Date.now().toString(36)}`;
-    const metadata = jsonBytes({ name: basename(path), parents: [parentId], mimeType: mimeType2 });
+    const metadata = jsonBytes({ name: basename(path), parents: [parentId], mimeType: mimeType3 });
     const line = (value) => new TextEncoder().encode(value);
     const body = concatBytes(
       line(`--${boundary}\r
@@ -673,7 +674,7 @@ Content-Type: application/json; charset=UTF-8\r
       metadata,
       line(`\r
 --${boundary}\r
-Content-Type: ${mimeType2}\r
+Content-Type: ${mimeType3}\r
 \r
 `),
       bytes,
@@ -690,11 +691,11 @@ Content-Type: ${mimeType2}\r
     const file = responseJson(response);
     return { driveId: file.id, hash: remoteHash(file) };
   }
-  async update(driveId, bytes, mimeType2) {
+  async update(driveId, bytes, mimeType3) {
     const response = await this.request({
       method: "PATCH",
       url: `${DRIVE_UPLOAD_API}/${encodeURIComponent(driveId)}?uploadType=media&fields=id,name,mimeType,md5Checksum,modifiedTime,size`,
-      headers: { "Content-Type": mimeType2 },
+      headers: { "Content-Type": mimeType3 },
       body: bytes
     });
     const file = responseJson(response);
@@ -1188,15 +1189,21 @@ function isStoredManifest(value) {
 
 // src/sync/plugin-updater.ts
 var PluginUpdater = class {
-  constructor(vault, drive, rootFolderId) {
+  constructor(vault, drive, rootFolderId, options = { mode: "download" }) {
     this.vault = vault;
     this.drive = drive;
     this.rootFolderId = rootFolderId;
+    this.options = options;
   }
   async sync() {
-    const remoteFiles = (await this.drive.listTree(this.rootFolderId)).filter((file) => pluginLocalPath(file.path)).sort((a, b) => a.path.localeCompare(b.path));
+    const remoteFiles = (await this.drive.listTree(this.rootFolderId)).sort((a, b) => a.path.localeCompare(b.path));
+    if (this.options.mode === "publish") return this.publish(remoteFiles);
+    return this.download(remoteFiles);
+  }
+  async download(remoteFiles) {
+    const pluginFiles = remoteFiles.filter((file) => pluginLocalPath(file.path));
     const updated = [];
-    for (const remote of remoteFiles) {
+    for (const remote of pluginFiles) {
       const data = await this.drive.download(remote.driveId);
       const local = await readOptional(this.vault, remote.path);
       if (local && sameBytes(local, data)) continue;
@@ -1204,6 +1211,27 @@ var PluginUpdater = class {
       updated.push(remote.path);
     }
     return updated;
+  }
+  async publish(remoteFiles) {
+    const remoteByPath = new Map(remoteFiles.map((file) => [file.path, file]));
+    const updated = [];
+    let parentId;
+    for (const file of SKEN_BRAIN_PLUGIN_FILES) {
+      const path = `obsidian/plugins/sken-brain/${file}`;
+      const local = await readOptional(this.vault, path);
+      if (!local) continue;
+      const remote = remoteByPath.get(path);
+      if (remote) {
+        const current = await this.drive.download(remote.driveId);
+        if (sameBytes(local, current)) continue;
+        await this.drive.update(remote.driveId, new Uint8Array(local), mimeType(path));
+      } else {
+        parentId != null ? parentId : parentId = await this.drive.ensureFolder("obsidian/plugins/sken-brain", this.rootFolderId);
+        await this.drive.upload(path, new Uint8Array(local), parentId, mimeType(path));
+      }
+      updated.push(path);
+    }
+    return updated.sort((a, b) => a.localeCompare(b));
   }
 };
 async function readOptional(vault, path) {
@@ -1220,6 +1248,12 @@ function sameBytes(local, remote) {
 }
 function toArrayBuffer(data) {
   return data.slice().buffer;
+}
+function mimeType(path) {
+  if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".js")) return "application/javascript";
+  if (path.endsWith(".css")) return "text/css";
+  return "application/octet-stream";
 }
 
 // src/core/conflicts.ts
@@ -1362,9 +1396,9 @@ var SyncEngine = class {
       const data = new Uint8Array(await this.vault.read(action.path));
       const parentId = await this.drive.ensureFolder(parentPath(action.path), this.rootFolderId);
       if (action.remote) {
-        await this.retry(() => this.drive.update(action.remote.driveId, data, mimeType(action.path)));
+        await this.retry(() => this.drive.update(action.remote.driveId, data, mimeType2(action.path)));
       } else {
-        await this.retry(() => this.drive.upload(action.path, data, parentId, mimeType(action.path)));
+        await this.retry(() => this.drive.upload(action.path, data, parentId, mimeType2(action.path)));
       }
       report.uploaded.push(action.path);
       return;
@@ -1462,7 +1496,7 @@ function parentPath(path) {
   const separator = path.lastIndexOf("/");
   return separator === -1 ? "" : path.slice(0, separator);
 }
-function mimeType(path) {
+function mimeType2(path) {
   var _a;
   const extension = (_a = path.split(".").pop()) == null ? void 0 : _a.toLowerCase();
   if (extension === "md") return "text/markdown";
@@ -1648,8 +1682,11 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       const report = await engine.sync();
       if (report.status === "synced" || report.status === "conflict") {
         try {
-          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId).sync();
-          if (updated.length) new import_obsidian6.Notice("Sken Brain plugin updated. Reload Obsidian to apply it.");
+          const mode = import_obsidian6.Platform.isDesktopApp ? "publish" : "download";
+          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId, { mode }).sync();
+          if (updated.length) {
+            new import_obsidian6.Notice(mode === "publish" ? "Sken Brain plugin bundle published to Google Drive." : "Sken Brain plugin updated. Reload Obsidian to apply it.");
+          }
         } catch (error) {
           new import_obsidian6.Notice(`Sken Brain plugin update failed: ${error instanceof Error ? error.message : String(error)}`);
         }

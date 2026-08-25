@@ -63,7 +63,7 @@ https://drive.google.com/drive/folders/FOLDER_ID
 
 the value after `/folders/` is the folder ID.
 
-For mobile plugin updates, place the current Sken Brain bundle under this Drive folder:
+Desktop sync publishes the current Sken Brain bundle under this Drive folder, and mobile sync downloads it from there:
 
 ```text
 obsidian/plugins/sken-brain/manifest.json
@@ -71,7 +71,7 @@ obsidian/plugins/sken-brain/main.js
 obsidian/plugins/sken-brain/styles.css
 ```
 
-Only those three bundle files are downloaded to `.obsidian/plugins/sken-brain/`. Plugin settings, OAuth tokens, and AI API keys are ignored. Reload Obsidian after the sync reports a plugin update.
+Only those three bundle files are published or downloaded. Plugin settings, OAuth tokens, and AI API keys are ignored. Reload Obsidian after the sync reports a mobile plugin update.
 
 ## 5. Configure each Obsidian device
 

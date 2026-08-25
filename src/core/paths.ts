@@ -2,7 +2,8 @@ const TEMP_FILE_PATTERNS = [/~$/, /\.swp$/i, /\.tmp$/i, /\.lock$/i];
 const PLUGIN_REMOTE_PREFIX = "obsidian/plugins/";
 const PLUGIN_REMOTE_ROOT = "obsidian/plugins/sken-brain/";
 const PLUGIN_LOCAL_ROOT = ".obsidian/plugins/sken-brain/";
-const PLUGIN_FILES = new Set(["manifest.json", "main.js", "styles.css"]);
+export const SKEN_BRAIN_PLUGIN_FILES = ["manifest.json", "main.js", "styles.css"] as const;
+const PLUGIN_FILES = new Set<string>(SKEN_BRAIN_PLUGIN_FILES);
 
 export function normalizeVaultPath(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "");

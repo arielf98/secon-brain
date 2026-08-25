@@ -122,8 +122,13 @@ export default class SecondBrainPlugin extends Plugin {
       const report = await engine.sync();
       if (report.status === "synced" || report.status === "conflict") {
         try {
-          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId).sync();
-          if (updated.length) new Notice("Sken Brain plugin updated. Reload Obsidian to apply it.");
+          const mode = Platform.isDesktopApp ? "publish" : "download";
+          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId, { mode }).sync();
+          if (updated.length) {
+            new Notice(mode === "publish"
+              ? "Sken Brain plugin bundle published to Google Drive."
+              : "Sken Brain plugin updated. Reload Obsidian to apply it.");
+          }
         } catch (error) {
           new Notice(`Sken Brain plugin update failed: ${error instanceof Error ? error.message : String(error)}`);
         }
