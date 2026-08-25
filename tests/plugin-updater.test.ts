@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { sha256 } from "../src/core/hash.js";
 import type { FileSnapshot, RemoteFile } from "../src/core/sync-model.js";
 import type { DriveUploadResult, GoogleDrive } from "../src/integrations/google-drive.js";
-import { PluginUpdater } from "../src/sync/plugin-updater.js";
+import { PluginUpdater, type PluginSyncState } from "../src/sync/plugin-updater.js";
 import type { VaultAdapter } from "../src/sync/vault-adapter.js";
 
 const bytes = (value: string): ArrayBuffer => new TextEncoder().encode(value).buffer;
@@ -45,6 +45,7 @@ class FakeVault implements VaultAdapter {
 
 class FakeDrive implements GoogleDrive {
   readonly files = new Map<string, { remote: RemoteFile; data: ArrayBuffer }>();
+  downloadCalls = 0;
   private nextId = 100;
 
   constructor(initial: Record<string, string>) {
@@ -64,6 +65,7 @@ class FakeDrive implements GoogleDrive {
   }
 
   async download(driveId: string): Promise<Uint8Array> {
+    this.downloadCalls += 1;
     const file = [...this.files.values()].find(({ remote }) => remote.driveId === driveId);
     if (!file) throw new Error(`missing remote file: ${driveId}`);
     return new Uint8Array(file.data);
@@ -132,10 +134,18 @@ test("downloads the latest Sken Brain bundle without syncing plugin settings", a
 test("does not rewrite an unchanged Sken Brain bundle", async () => {
   const vault = new FakeVault({ "obsidian/plugins/sken-brain/main.js": "same" });
   const drive = new FakeDrive({ "obsidian/plugins/sken-brain/main.js": "same" });
+  let storedState: Record<string, PluginSyncState> = {};
+  const stateStore = {
+    load: async () => storedState,
+    save: async (state: Record<string, PluginSyncState>) => { storedState = state; },
+  };
+  const updater = new PluginUpdater(vault, drive, "root", { mode: "download" }, stateStore);
 
-  const updated = await new PluginUpdater(vault, drive, "root").sync();
+  const updated = await updater.sync();
+  await new PluginUpdater(vault, drive, "root", { mode: "download" }, stateStore).sync();
 
   assert.deepEqual(updated, []);
+  assert.equal(drive.downloadCalls, 1);
 });
 
 test("publishes the local Sken Brain bundle from desktop to Drive", async () => {
@@ -148,14 +158,22 @@ test("publishes the local Sken Brain bundle from desktop to Drive", async () => 
   const drive = new FakeDrive({
     "obsidian/plugins/sken-brain/main.js": "old remote main",
   });
+  let storedState: Record<string, PluginSyncState> = {};
+  const stateStore = {
+    load: async () => storedState,
+    save: async (state: Record<string, PluginSyncState>) => { storedState = state; },
+  };
+  const updater = new PluginUpdater(vault, drive, "root", { mode: "publish" }, stateStore);
 
-  const updated = await new PluginUpdater(vault, drive, "root", { mode: "publish" }).sync();
+  const updated = await updater.sync();
+  await new PluginUpdater(vault, drive, "root", { mode: "publish" }, stateStore).sync();
 
   assert.deepEqual(updated, [
     "obsidian/plugins/sken-brain/main.js",
     "obsidian/plugins/sken-brain/manifest.json",
     "obsidian/plugins/sken-brain/styles.css",
   ]);
+  assert.equal(drive.downloadCalls, 1);
   assert.equal(text(await drive.download(drive.files.get("obsidian/plugins/sken-brain/main.js")!.remote.driveId)), "local main");
   assert.equal(text(await drive.download(drive.files.get("obsidian/plugins/sken-brain/manifest.json")!.remote.driveId)), "local manifest");
   assert.equal(drive.files.has("obsidian/plugins/sken-brain/data.json"), false);

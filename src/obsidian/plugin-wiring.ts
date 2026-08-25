@@ -44,5 +44,16 @@ export function statusLabel(status: SyncReport["status"]): string {
 export function statusSummary(report: SyncReport): string {
   const label = statusLabel(report.status);
   if (report.errors.length) return `${label} · ${report.errors[0]}`;
-  return `${label} · ${report.uploaded.length} uploaded · ${report.downloaded.length} downloaded${report.conflicts.length ? ` · ${report.conflicts.length} conflicts` : ""}`;
+  const deleted = report.deleted?.length ?? 0;
+  return `${label} · ${report.uploaded.length} uploaded · ${report.downloaded.length} downloaded${deleted ? ` · ${deleted} deleted` : ""}${report.conflicts.length ? ` · ${report.conflicts.length} conflicts` : ""}`;
+}
+
+export function syncNotice(report: SyncReport): string {
+  if (report.status === "auth-required") return "Google Drive authorization is required.";
+  if (report.status === "offline") return `Sync offline · ${report.errors[0] ?? "Check your connection or configuration."}`;
+  if (report.status === "conflict") return `Sync conflict · ${report.conflicts.length} file(s)`;
+  const deleted = report.deleted?.length ?? 0;
+  const changes = report.uploaded.length + report.downloaded.length + deleted;
+  if (!changes) return "Sync complete · No changes";
+  return `Sync complete · ${report.uploaded.length} uploaded · ${report.downloaded.length} downloaded${deleted ? ` · ${deleted} deleted` : ""}`;
 }

@@ -5,6 +5,7 @@ import {
   registerSecondBrainCommands,
   RELATED_NOTES_VIEW_TYPE,
   statusLabel,
+  syncNotice,
   statusSummary,
 } from "../src/obsidian/plugin-wiring.js";
 
@@ -55,9 +56,10 @@ test("shows sync counts and errors in the status summary", () => {
     status: "synced",
     uploaded: ["note.md", "image.png"],
     downloaded: ["remote.md"],
+    deleted: ["old.md"],
     conflicts: [],
     errors: [],
-  }), "Synced · 2 uploaded · 1 downloaded");
+  }), "Synced · 2 uploaded · 1 downloaded · 1 deleted");
   assert.equal(statusSummary({
     status: "offline",
     uploaded: [],
@@ -65,4 +67,39 @@ test("shows sync counts and errors in the status summary", () => {
     conflicts: [],
     errors: ["Drive folder was not found"],
   }), "Offline · Drive folder was not found");
+});
+
+test("formats a visible notice for every sync result", () => {
+  assert.equal(syncNotice({
+    status: "synced",
+    uploaded: [],
+    downloaded: [],
+    deleted: [],
+    conflicts: [],
+    errors: [],
+  }), "Sync complete · No changes");
+  assert.equal(syncNotice({
+    status: "synced",
+    uploaded: ["note.md"],
+    downloaded: ["remote.md"],
+    deleted: ["old.md"],
+    conflicts: [],
+    errors: [],
+  }), "Sync complete · 1 uploaded · 1 downloaded · 1 deleted");
+  assert.equal(syncNotice({
+    status: "offline",
+    uploaded: [],
+    downloaded: [],
+    deleted: [],
+    conflicts: [],
+    errors: ["Drive folder was not found"],
+  }), "Sync offline · Drive folder was not found");
+  assert.equal(syncNotice({
+    status: "conflict",
+    uploaded: [],
+    downloaded: [],
+    deleted: [],
+    conflicts: ["a.md", "b.md"],
+    errors: [],
+  }), "Sync conflict · 2 file(s)");
 });
