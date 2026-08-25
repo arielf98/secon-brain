@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createAuthorizationBrowser,
   OAuthAuthorizationError,
   WorkerGoogleAuth,
   type GoogleOAuthStateStore,
@@ -34,6 +35,20 @@ const jsonResponse = (value: unknown, status = 200): HttpResponse => ({
   status,
   headers: { "content-type": "application/json" },
   body: new TextEncoder().encode(JSON.stringify(value)).buffer,
+});
+
+test("uses the desktop external browser opener when one is available", () => {
+  let opened = "";
+  const reserveBrowser = createAuthorizationBrowser(
+    () => { throw new Error("window.open should not be used on desktop"); },
+    (url) => { opened = url; },
+  );
+
+  const browser = reserveBrowser();
+  assert.ok(browser);
+  browser.navigate("https://accounts.google.com/o/oauth2/v2/auth");
+
+  assert.equal(opened, "https://accounts.google.com/o/oauth2/v2/auth");
 });
 
 class MemoryTokenStore implements GoogleTokenStore {

@@ -430,6 +430,20 @@ function overlapCount(left, right) {
 }
 
 // src/integrations/google-auth.ts
+function createAuthorizationBrowser(openWindow, openExternal) {
+  return () => {
+    if (openExternal) return { navigate: openExternal, close: () => void 0 };
+    const browser = openWindow();
+    if (!browser) return void 0;
+    browser.opener = null;
+    return {
+      navigate: (url) => {
+        browser.location.href = url;
+      },
+      close: () => browser.close()
+    };
+  };
+}
 var OAuthAuthorizationError = class extends Error {
   constructor(message) {
     super(message);
@@ -1637,17 +1651,10 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       transport,
       store,
       stateStore,
-      () => {
-        const browser = window.open("about:blank", "_blank");
-        if (!browser) return void 0;
-        browser.opener = null;
-        return {
-          navigate: (url) => {
-            browser.location.href = url;
-          },
-          close: () => browser.close()
-        };
-      }
+      createAuthorizationBrowser(
+        () => window.open("about:blank", "_blank"),
+        desktopExternalBrowser()
+      )
     );
   }
   manifestStore() {
@@ -1690,3 +1697,14 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     if (report.status === "auth-required") new import_obsidian6.Notice("Google Drive authorization is required.");
   }
 };
+function desktopExternalBrowser() {
+  if (!import_obsidian6.Platform.isDesktopApp) return void 0;
+  try {
+    const { shell } = require("electron");
+    return (url) => {
+      void shell.openExternal(url);
+    };
+  } catch {
+    return void 0;
+  }
+}

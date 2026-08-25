@@ -1,4 +1,4 @@
-import { Notice, Plugin, type ObsidianProtocolData } from "obsidian";
+import { Notice, Platform, Plugin, type ObsidianProtocolData } from "obsidian";
 import { DeepSeekClient } from "./ai/deepseek-client.js";
 import { AiCommands } from "./ai/ai-commands.js";
 import type { AiPreview } from "./ai/ai-types.js";
@@ -6,6 +6,7 @@ import { LocalContextRetriever } from "./ai/context-retriever.js";
 import { OpenAiClient } from "./ai/openai-client.js";
 import { NoteIndex } from "./core/note-index.js";
 import {
+  createAuthorizationBrowser,
   WorkerGoogleAuth,
   type GoogleOAuthStateStore,
   type GoogleTokenStore,
@@ -227,15 +228,10 @@ export default class SecondBrainPlugin extends Plugin {
       transport,
       store,
       stateStore,
-      () => {
-        const browser = window.open("about:blank", "_blank");
-        if (!browser) return undefined;
-        browser.opener = null;
-        return {
-          navigate: (url: string) => { browser.location.href = url; },
-          close: () => browser.close(),
-        };
-      },
+      createAuthorizationBrowser(
+        () => window.open("about:blank", "_blank"),
+        desktopExternalBrowser(),
+      ),
     );
   }
 
@@ -279,5 +275,15 @@ export default class SecondBrainPlugin extends Plugin {
     this.statusBar?.setReport(report);
     if (report.status === "conflict") new Notice(`Sync conflict: ${report.conflicts.length} file(s)`);
     if (report.status === "auth-required") new Notice("Google Drive authorization is required.");
+  }
+}
+
+function desktopExternalBrowser(): ((url: string) => void) | undefined {
+  if (!Platform.isDesktopApp) return undefined;
+  try {
+    const { shell } = require("electron") as { shell: { openExternal(url: string): Promise<void> } };
+    return (url) => { void shell.openExternal(url); };
+  } catch {
+    return undefined;
   }
 }

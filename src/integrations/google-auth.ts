@@ -38,6 +38,22 @@ export interface AuthorizationBrowser {
   close(): void;
 }
 
+export function createAuthorizationBrowser(
+  openWindow: () => Window | null,
+  openExternal?: (url: string) => void,
+): () => AuthorizationBrowser | undefined {
+  return () => {
+    if (openExternal) return { navigate: openExternal, close: () => undefined };
+    const browser = openWindow();
+    if (!browser) return undefined;
+    browser.opener = null;
+    return {
+      navigate: (url) => { browser.location.href = url; },
+      close: () => browser.close(),
+    };
+  };
+}
+
 export class OAuthAuthorizationError extends Error {
   constructor(message: string) {
     super(message);
