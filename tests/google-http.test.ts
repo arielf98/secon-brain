@@ -245,3 +245,25 @@ test("keeps root-level uploads in the configured Drive folder", async () => {
   assert.equal(await client.ensureFolder("", "drive-root"), "drive-root");
   assert.equal(transport.requests.length, 0);
 });
+
+test("uploads multipart file content without losing the TextEncoder context", async () => {
+  const transport = new FakeTransport(() => jsonResponse({
+    id: "drive-file",
+    name: "README.md",
+    mimeType: "text/markdown",
+    md5Checksum: "hash",
+    modifiedTime: "2026-08-25T00:00:00.000Z",
+    size: "4",
+  }));
+  const client = new GoogleDriveClient(transport, async () => "access-token");
+
+  const result = await client.upload(
+    "README.md",
+    new TextEncoder().encode("test"),
+    "drive-root",
+    "text/markdown",
+  );
+
+  assert.equal(result.driveId, "drive-file");
+  assert.equal(transport.requests[0]?.method, "POST");
+});

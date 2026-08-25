@@ -640,7 +640,7 @@ var GoogleDriveClient = class {
   async upload(path, bytes, parentId, mimeType2) {
     const boundary = `second-brain-${Date.now().toString(36)}`;
     const metadata = jsonBytes({ name: basename(path), parents: [parentId], mimeType: mimeType2 });
-    const line = new TextEncoder().encode;
+    const line = (value) => new TextEncoder().encode(value);
     const body = concatBytes(
       line(`--${boundary}\r
 Content-Type: application/json; charset=UTF-8\r
