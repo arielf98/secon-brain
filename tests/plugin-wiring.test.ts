@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { registerSecondBrainCommands, RELATED_NOTES_VIEW_TYPE, statusLabel } from "../src/obsidian/plugin-wiring.js";
+import {
+  registerSecondBrainCommands,
+  RELATED_NOTES_VIEW_TYPE,
+  statusLabel,
+  statusSummary,
+} from "../src/obsidian/plugin-wiring.js";
 
 test("registers all user-facing commands and the Related Notes view", () => {
   const commands: string[] = [];
@@ -36,4 +41,21 @@ test("maps sync states to short UI labels", () => {
   assert.equal(statusLabel("conflict"), "Conflict");
   assert.equal(statusLabel("offline"), "Offline");
   assert.equal(statusLabel("auth-required"), "Auth required");
+});
+
+test("shows sync counts and errors in the status summary", () => {
+  assert.equal(statusSummary({
+    status: "synced",
+    uploaded: ["note.md", "image.png"],
+    downloaded: ["remote.md"],
+    conflicts: [],
+    errors: [],
+  }), "Synced · 2 uploaded · 1 downloaded");
+  assert.equal(statusSummary({
+    status: "offline",
+    uploaded: [],
+    downloaded: [],
+    conflicts: [],
+    errors: ["Drive folder was not found"],
+  }), "Offline · Drive folder was not found");
 });

@@ -1002,6 +1002,11 @@ function statusLabel(status) {
   if (status === "auth-required") return "Auth required";
   return status[0].toUpperCase() + status.slice(1);
 }
+function statusSummary(report) {
+  const label = statusLabel(report.status);
+  if (report.errors.length) return `${label} \xB7 ${report.errors[0]}`;
+  return `${label} \xB7 ${report.uploaded.length} uploaded \xB7 ${report.downloaded.length} downloaded${report.conflicts.length ? ` \xB7 ${report.conflicts.length} conflicts` : ""}`;
+}
 
 // src/obsidian/related-notes-view.ts
 var RelatedNotesView = class extends import_obsidian4.ItemView {
@@ -1122,7 +1127,7 @@ var SyncStatusBar = class {
     this.element = element;
   }
   setReport(report) {
-    this.element.setText(statusLabel(report.status));
+    this.element.setText(statusSummary(report));
     this.element.dataset.syncStatus = report.status;
     this.element.title = report.errors.join("\n") || `${report.uploaded.length} uploaded, ${report.downloaded.length} downloaded`;
   }

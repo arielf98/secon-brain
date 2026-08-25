@@ -38,3 +38,9 @@ export function statusLabel(status: SyncReport["status"]): string {
   if (status === "auth-required") return "Auth required";
   return status[0].toUpperCase() + status.slice(1);
 }
+
+export function statusSummary(report: SyncReport): string {
+  const label = statusLabel(report.status);
+  if (report.errors.length) return `${label} · ${report.errors[0]}`;
+  return `${label} · ${report.uploaded.length} uploaded · ${report.downloaded.length} downloaded${report.conflicts.length ? ` · ${report.conflicts.length} conflicts` : ""}`;
+}
