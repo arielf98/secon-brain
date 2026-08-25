@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildAuthorizationUrl,
-  createPkcePair,
-  type GoogleOAuthConfig,
+  OAuthAuthorizationError,
+  WorkerGoogleAuth,
+  type GoogleOAuthStateStore,
+  type GoogleToken,
+  type GoogleTokenStore,
 } from "../src/integrations/google-auth.js";
 import {
   AuthRequiredError,
@@ -34,21 +36,140 @@ const jsonResponse = (value: unknown, status = 200): HttpResponse => ({
   body: new TextEncoder().encode(JSON.stringify(value)).buffer,
 });
 
-test("builds an OAuth URL with PKCE and state", async () => {
-  const config: GoogleOAuthConfig = {
-    clientId: "client-id",
-    scopes: ["https://www.googleapis.com/auth/drive"],
-  };
-  const pkce = await createPkcePair();
-  const url = buildAuthorizationUrl(config, "http://127.0.0.1:43123", "state-value", pkce.challenge);
-  const params = new URL(url).searchParams;
+class MemoryTokenStore implements GoogleTokenStore {
+  constructor(public value?: GoogleToken) {}
+  async load(): Promise<GoogleToken | undefined> { return this.value; }
+  async save(token: GoogleToken): Promise<void> { this.value = token; }
+  async clear(): Promise<void> { this.value = undefined; }
+}
 
-  assert.equal(params.get("client_id"), "client-id");
-  assert.equal(params.get("redirect_uri"), "http://127.0.0.1:43123");
-  assert.equal(params.get("code_challenge"), pkce.challenge);
-  assert.equal(params.get("code_challenge_method"), "S256");
-  assert.equal(params.get("state"), "state-value");
-  assert.equal(params.get("access_type"), "offline");
+class MemoryStateStore implements GoogleOAuthStateStore {
+  constructor(public value?: string) {}
+  async load(): Promise<string | undefined> { return this.value; }
+  async save(state: string): Promise<void> { this.value = state; }
+  async clear(): Promise<void> { this.value = undefined; }
+}
+
+test("starts cross-platform authorization and saves the callback state", async () => {
+  const tokenStore = new MemoryTokenStore();
+  let reserved = false;
+  const stateStore = new class extends MemoryStateStore {
+    override async save(state: string): Promise<void> {
+      assert.equal(reserved, true);
+      await super.save(state);
+    }
+  }();
+  let opened = "";
+  const auth = new WorkerGoogleAuth(
+    { serviceUrl: "https://sync.example/" },
+    new FakeTransport(() => jsonResponse({})),
+    tokenStore,
+    stateStore,
+    () => {
+      reserved = true;
+      return {
+        navigate: (url: string) => { opened = url; },
+        close: () => undefined,
+      };
+    },
+  );
+
+  await auth.beginAuthorization();
+
+  assert.ok(stateStore.value);
+  const url = new URL(opened);
+  assert.equal(url.toString().startsWith("https://sync.example/oauth/start?"), true);
+  assert.equal(url.searchParams.get("state"), stateStore.value);
+});
+
+test("reports when the authorization browser cannot be opened", async () => {
+  const stateStore = new MemoryStateStore();
+  const auth = new WorkerGoogleAuth(
+    { serviceUrl: "https://sync.example" },
+    new FakeTransport(() => jsonResponse({})),
+    new MemoryTokenStore(),
+    stateStore,
+    () => undefined,
+  );
+
+  await assert.rejects(
+    () => auth.beginAuthorization(),
+    new OAuthAuthorizationError("Could not open the browser for Google authorization"),
+  );
+  assert.equal(stateStore.value, undefined);
+});
+
+test("exchanges a verified Obsidian callback and stores the token", async () => {
+  const tokenStore = new MemoryTokenStore();
+  const stateStore = new MemoryStateStore("expected-state");
+  const transport = new FakeTransport((request) => {
+    assert.equal(request.url, "https://sync.example/oauth/exchange");
+    assert.deepEqual(JSON.parse(String(request.body)), { code: "authorization-code" });
+    return jsonResponse({ accessToken: "access", refreshToken: "refresh", expiresAt: 10_000 });
+  });
+  const auth = new WorkerGoogleAuth(
+    { serviceUrl: "https://sync.example" },
+    transport,
+    tokenStore,
+    stateStore,
+    () => undefined,
+  );
+
+  const token = await auth.completeAuthorization({ state: "expected-state", code: "authorization-code" });
+
+  assert.deepEqual(token, { accessToken: "access", refreshToken: "refresh", expiresAt: 10_000 });
+  assert.deepEqual(tokenStore.value, token);
+  assert.equal(stateStore.value, undefined);
+});
+
+test("rejects an OAuth callback with the wrong device state", async () => {
+  const transport = new FakeTransport(() => {
+    throw new Error("unexpected request");
+  });
+  const auth = new WorkerGoogleAuth(
+    { serviceUrl: "https://sync.example" },
+    transport,
+    new MemoryTokenStore(),
+    new MemoryStateStore("expected-state"),
+    () => undefined,
+  );
+
+  await assert.rejects(
+    () => auth.completeAuthorization({ state: "wrong-state", code: "authorization-code" }),
+    OAuthAuthorizationError,
+  );
+  assert.equal(transport.requests.length, 0);
+});
+
+test("refreshes an expired token through the sync service", async () => {
+  const tokenStore = new MemoryTokenStore({ accessToken: "old", refreshToken: "refresh", expiresAt: 0 });
+  const transport = new FakeTransport((request) => {
+    assert.equal(request.url, "https://sync.example/oauth/refresh");
+    assert.deepEqual(JSON.parse(String(request.body)), { refreshToken: "refresh" });
+    return jsonResponse({ accessToken: "new", refreshToken: "refresh", expiresAt: Date.now() + 3_600_000 });
+  });
+  const auth = new WorkerGoogleAuth(
+    { serviceUrl: "https://sync.example" },
+    transport,
+    tokenStore,
+    new MemoryStateStore(),
+    () => undefined,
+  );
+
+  assert.equal(await auth.getAccessToken(), "new");
+  assert.equal(tokenStore.value?.accessToken, "new");
+});
+
+test("maps a rejected refresh token to authorization required", async () => {
+  const auth = new WorkerGoogleAuth(
+    { serviceUrl: "https://sync.example" },
+    new FakeTransport(() => jsonResponse({ error: "Google authorization is required" }, 401)),
+    new MemoryTokenStore({ accessToken: "old", refreshToken: "revoked", expiresAt: 0 }),
+    new MemoryStateStore(),
+    () => undefined,
+  );
+
+  await assert.rejects(() => auth.getAccessToken(), AuthRequiredError);
 });
 
 test("maps unauthorized HTTP responses to AuthRequiredError", () => {

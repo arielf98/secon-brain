@@ -5,5 +5,5 @@
   "minAppVersion": "1.5.0",
   "description": "A simple local-first second brain with Google Drive sync and optional AI assistance.",
   "author": "Personal",
-  "isDesktopOnly": true
+  "isDesktopOnly": false
 }

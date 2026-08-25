@@ -6,7 +6,7 @@ const deployTo = valueAfter("--deploy-to");
 const options = {
   entryPoints: ["src/main.ts"],
   bundle: true,
-  external: ["obsidian", "electron", "node:http"],
+  external: ["obsidian"],
   format: "cjs",
   platform: "browser",
   target: "es2019",

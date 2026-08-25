@@ -24,7 +24,6 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian6 = require("obsidian");
-var import_electron = require("electron");
 
 // src/integrations/http.ts
 var HttpError = class extends Error {
@@ -431,168 +430,106 @@ function overlapCount(left, right) {
 }
 
 // src/integrations/google-auth.ts
-var import_node_http = require("node:http");
-var AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
-var TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-var DEFAULT_SCOPE = "https://www.googleapis.com/auth/drive";
 var OAuthAuthorizationError = class extends Error {
   constructor(message) {
     super(message);
     this.name = "OAuthAuthorizationError";
   }
 };
-function base64Url(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-async function createPkcePair() {
-  const verifierBytes = new Uint8Array(32);
-  crypto.getRandomValues(verifierBytes);
-  const verifier = base64Url(verifierBytes);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  return { verifier, challenge: base64Url(new Uint8Array(digest)) };
-}
-function buildAuthorizationUrl(config, redirectUri, state, challenge) {
-  var _a;
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: config.clientId,
-    redirect_uri: redirectUri,
-    scope: (((_a = config.scopes) == null ? void 0 : _a.length) ? config.scopes : [DEFAULT_SCOPE]).join(" "),
-    state,
-    access_type: "offline",
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    prompt: "consent"
-  });
-  return `${AUTHORIZATION_ENDPOINT}?${params.toString()}`;
-}
-function parseAuthorizationResponse(callbackUrl, expectedState) {
-  const params = new URL(callbackUrl).searchParams;
-  const error = params.get("error");
-  if (error) throw new OAuthAuthorizationError(`Google authorization failed: ${error}`);
-  const state = params.get("state");
-  const code = params.get("code");
-  if (!state || state !== expectedState) throw new OAuthAuthorizationError("Google authorization state did not match");
-  if (!code) throw new OAuthAuthorizationError("Google authorization did not return a code");
-  return { code, state };
-}
-function tokenFromResponse(value, refreshToken) {
-  var _a, _b;
-  if (!value.access_token) throw new OAuthAuthorizationError("Google token response did not include an access token");
-  return {
-    accessToken: value.access_token,
-    refreshToken: (_a = value.refresh_token) != null ? _a : refreshToken,
-    expiresAt: Date.now() + ((_b = value.expires_in) != null ? _b : 3600) * 1e3
-  };
-}
-var GoogleAuthClient = class {
-  constructor(config, transport) {
-    this.config = config;
-    this.transport = transport;
-  }
-  async exchangeCode(code, verifier, redirectUri) {
-    const response = await this.transport.request({
-      method: "POST",
-      url: TOKEN_ENDPOINT,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: this.config.clientId,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-        code_verifier: verifier
-      }).toString()
-    });
-    return tokenFromResponse(responseJson(requireSuccess(response)));
-  }
-  async refreshAccessToken(refreshToken) {
-    const response = await this.transport.request({
-      method: "POST",
-      url: TOKEN_ENDPOINT,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        refresh_token: refreshToken,
-        client_id: this.config.clientId,
-        grant_type: "refresh_token"
-      }).toString()
-    });
-    return tokenFromResponse(responseJson(requireSuccess(response)), refreshToken);
-  }
-};
-var LoopbackGoogleAuth = class {
-  constructor(config, transport, tokenStore, openExternal) {
+var WorkerGoogleAuth = class {
+  constructor(config, transport, tokenStore, stateStore, reserveBrowser) {
     this.config = config;
     this.transport = transport;
     this.tokenStore = tokenStore;
-    this.openExternal = openExternal;
+    this.stateStore = stateStore;
+    this.reserveBrowser = reserveBrowser;
   }
-  async authorize() {
-    const pkce = await createPkcePair();
-    const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
-    let callbackUrl = "";
-    const server = (0, import_node_http.createServer)((request, response) => {
-      var _a;
-      callbackUrl = `http://127.0.0.1:${port}${(_a = request.url) != null ? _a : "/"}`;
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "text/plain; charset=utf-8");
-      response.end("Sken Brain authorization complete. You can close this window.");
-    });
-    let port = 0;
+  async beginAuthorization() {
+    const state = randomState();
+    const url = new URL(this.endpoint("/oauth/start"));
+    url.searchParams.set("state", state);
+    const browser = this.reserveBrowser();
+    if (!browser) throw new OAuthAuthorizationError("Could not open the browser for Google authorization");
     try {
-      await new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => {
-          const address = server.address();
-          if (!address || typeof address === "string") {
-            reject(new OAuthAuthorizationError("Could not open the Google OAuth callback"));
-            return;
-          }
-          port = address.port;
-          resolve();
-        });
-      });
-      const redirectUri = `http://127.0.0.1:${port}`;
-      await this.openExternal(buildAuthorizationUrl(this.config, redirectUri, state, pkce.challenge));
-      const callback = await waitForCallback(server, () => callbackUrl);
-      const authorization = parseAuthorizationResponse(callback, state);
-      const token = await new GoogleAuthClient(this.config, this.transport).exchangeCode(authorization.code, pkce.verifier, redirectUri);
-      await this.tokenStore.save(token);
-      return token;
-    } finally {
-      server.close();
+      await this.stateStore.save(state);
+      browser.navigate(url.toString());
+    } catch (error) {
+      browser.close();
+      await this.stateStore.clear();
+      throw error;
     }
   }
-  async refresh(token) {
-    if (!token.refreshToken) throw new OAuthAuthorizationError("Google authorization has no refresh token");
-    const refreshed = await new GoogleAuthClient(this.config, this.transport).refreshAccessToken(token.refreshToken);
-    await this.tokenStore.save(refreshed);
-    return refreshed;
+  async completeAuthorization(params) {
+    const expectedState = await this.stateStore.load();
+    if (!expectedState || params.state !== expectedState) {
+      throw new OAuthAuthorizationError("Google authorization state did not match");
+    }
+    if (params.error) {
+      await this.stateStore.clear();
+      throw new OAuthAuthorizationError(`Google authorization failed: ${params.error}`);
+    }
+    if (!params.code) throw new OAuthAuthorizationError("Google authorization did not return a code");
+    const response = requireSuccess(await this.transport.request({
+      method: "POST",
+      url: this.endpoint("/oauth/exchange"),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: params.code })
+    }));
+    const token = validToken(responseJson(response));
+    await this.tokenStore.save(token);
+    await this.stateStore.clear();
+    return token;
   }
   async clear() {
-    await this.tokenStore.clear();
+    await Promise.all([this.tokenStore.clear(), this.stateStore.clear()]);
   }
   async getAccessToken() {
     const token = await this.tokenStore.load();
     if (!token) throw new OAuthAuthorizationError("Google authorization is required");
     if (token.expiresAt > Date.now() + 6e4) return token.accessToken;
-    return (await this.refresh(token)).accessToken;
+    if (!token.refreshToken) throw new OAuthAuthorizationError("Google authorization has no refresh token");
+    const response = requireSuccess(await this.transport.request({
+      method: "POST",
+      url: this.endpoint("/oauth/refresh"),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: token.refreshToken })
+    }));
+    const refreshed = validToken(responseJson(response), token.refreshToken);
+    await this.tokenStore.save(refreshed);
+    return refreshed.accessToken;
+  }
+  endpoint(path) {
+    const value = this.config.serviceUrl.trim();
+    if (!value) throw new OAuthAuthorizationError("Configure the sync service URL first");
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new OAuthAuthorizationError("Sync service URL is invalid");
+    }
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname))) {
+      throw new OAuthAuthorizationError("Sync service URL must use HTTPS");
+    }
+    return new URL(path, `${url.origin}/`).toString();
   }
 };
-function waitForCallback(server, getUrl) {
-  return new Promise((resolve, reject) => {
-    const timer = setInterval(() => {
-      const url = getUrl();
-      if (!url) return;
-      clearInterval(timer);
-      resolve(url);
-    }, 25);
-    server.once("error", (error) => {
-      clearInterval(timer);
-      reject(error);
-    });
-  });
+function validToken(value, refreshToken) {
+  if (!value || typeof value !== "object") throw new OAuthAuthorizationError("Sync service returned an invalid token");
+  const token = value;
+  if (typeof token.accessToken !== "string" || typeof token.expiresAt !== "number") {
+    throw new OAuthAuthorizationError("Sync service returned an invalid token");
+  }
+  return {
+    accessToken: token.accessToken,
+    refreshToken: typeof token.refreshToken === "string" ? token.refreshToken : refreshToken,
+    expiresAt: token.expiresAt
+  };
+}
+function randomState() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 // src/integrations/google-drive.ts
@@ -1102,7 +1039,7 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
 // src/obsidian/settings-tab.ts
 var import_obsidian5 = require("obsidian");
 var DEFAULT_SETTINGS = {
-  googleClientId: "",
+  syncServiceUrl: "",
   driveFolderId: "",
   provider: "openai",
   apiKey: "",
@@ -1143,9 +1080,9 @@ var SecondBrainSettingTab = class extends import_obsidian5.PluginSettingTab {
       Object.assign(settings, patch);
       await this.saveSettings(settings);
     };
-    new import_obsidian5.Setting(containerEl).setName("Google desktop client ID").setDesc("Stored locally on this device.").addText((text) => text.setValue(settings.googleClientId).onChange((value) => update({ googleClientId: value.trim() })));
+    new import_obsidian5.Setting(containerEl).setName("Sync service URL").setDesc("The HTTPS URL of your Sken Brain sync Worker.").addText((text) => text.setValue(settings.syncServiceUrl).onChange((value) => update({ syncServiceUrl: value.trim() })));
     new import_obsidian5.Setting(containerEl).setName("Drive folder ID").setDesc("The Google Drive folder mirrored by this vault.").addText((text) => text.setValue(settings.driveFolderId).onChange((value) => update({ driveFolderId: value.trim() })));
-    new import_obsidian5.Setting(containerEl).setName("Google authorization").addButton((button) => button.setButtonText("Re-authenticate").onClick(() => this.actions.reauthenticate())).addButton((button) => button.setButtonText("Clear credentials").onClick(() => this.actions.clearCredentials()));
+    new import_obsidian5.Setting(containerEl).setName("Google authorization").addButton((button) => button.setButtonText("Authorize Google Drive").onClick(() => this.actions.reauthenticate())).addButton((button) => button.setButtonText("Clear credentials").onClick(() => this.actions.clearCredentials()));
     new import_obsidian5.Setting(containerEl).setName("AI provider").addDropdown((dropdown) => dropdown.addOption("openai", "OpenAI").addOption("deepseek", "DeepSeek").setValue(settings.provider).onChange((value) => update({ provider: value })));
     new import_obsidian5.Setting(containerEl).setName("API key").setDesc("Stored locally and never synced.").addText((text) => {
       text.setValue(settings.apiKey).onChange((value) => update({ apiKey: value }));
@@ -1517,6 +1454,10 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     }
     const transport = new ObsidianRequestTransport();
     const vault = new ObsidianVaultAdapter(this.app);
+    this.googleAuthClient = this.googleAuth(transport);
+    this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
+      void this.completeGoogleAuthorization(params, transport, vault);
+    });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
     await this.watcher.start();
@@ -1533,6 +1474,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       async (settings) => {
         this.pluginSettings = settings;
         await this.saveSettings();
+        this.googleAuthClient = this.googleAuth(transport);
       },
       {
         reauthenticate: () => this.reauthenticate(transport),
@@ -1578,18 +1520,16 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
   }
   async syncNow(transport, vault) {
     if (this.pluginSettings.paused) return;
-    if (!this.pluginSettings.googleClientId || !this.pluginSettings.driveFolderId) {
-      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure Google client ID and Drive folder ID first"] });
+    if (!this.pluginSettings.syncServiceUrl || !this.pluginSettings.driveFolderId) {
+      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure the sync service URL and Drive folder ID first"] });
+      return;
+    }
+    if (!this.pluginSettings.googleToken) {
+      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: ["Authorize Google Drive in Sken Brain settings"] });
       return;
     }
     try {
-      const auth = this.googleAuth(transport);
-      try {
-        await auth.getAccessToken();
-      } catch {
-        await auth.authorize();
-      }
-      const drive = new GoogleDriveClient(transport, () => auth.getAccessToken());
+      const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
       this.showReport(await engine.sync());
     } catch (error) {
@@ -1649,15 +1589,24 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
   }
   async reauthenticate(transport) {
     try {
-      await this.googleAuth(transport).authorize();
+      this.googleAuthClient = this.googleAuth(transport);
+      await this.googleAuthClient.beginAuthorization();
+      new import_obsidian6.Notice("Continue Google authorization in your browser.");
+    } catch (error) {
+      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
+    }
+  }
+  async completeGoogleAuthorization(params, transport, vault) {
+    try {
+      await this.googleAuthClient.completeAuthorization(params);
       new import_obsidian6.Notice("Google Drive authorized.");
+      await this.syncNow(transport, vault);
     } catch (error) {
       new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
     }
   }
   async clearCredentials() {
-    this.pluginSettings.googleToken = void 0;
-    await this.saveSettings();
+    await this.googleAuthClient.clear();
     new import_obsidian6.Notice("Google credentials cleared on this device.");
   }
   googleAuth(transport) {
@@ -1672,7 +1621,34 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
         await this.saveSettings();
       }
     };
-    return new LoopbackGoogleAuth({ clientId: this.pluginSettings.googleClientId }, transport, store, (url) => import_electron.shell.openExternal(url));
+    const stateStore = {
+      load: async () => this.pluginSettings.googleOAuthState,
+      save: async (state) => {
+        this.pluginSettings.googleOAuthState = state;
+        await this.saveSettings();
+      },
+      clear: async () => {
+        this.pluginSettings.googleOAuthState = void 0;
+        await this.saveSettings();
+      }
+    };
+    return new WorkerGoogleAuth(
+      { serviceUrl: this.pluginSettings.syncServiceUrl },
+      transport,
+      store,
+      stateStore,
+      () => {
+        const browser = window.open("about:blank", "_blank");
+        if (!browser) return void 0;
+        browser.opener = null;
+        return {
+          navigate: (url) => {
+            browser.location.href = url;
+          },
+          close: () => browser.close()
+        };
+      }
+    );
   }
   manifestStore() {
     return new DataManifestStore(

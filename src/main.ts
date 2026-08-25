@@ -1,12 +1,15 @@
-import { Notice, Plugin } from "obsidian";
-import { shell } from "electron";
+import { Notice, Plugin, type ObsidianProtocolData } from "obsidian";
 import { DeepSeekClient } from "./ai/deepseek-client.js";
 import { AiCommands } from "./ai/ai-commands.js";
 import type { AiPreview } from "./ai/ai-types.js";
 import { LocalContextRetriever } from "./ai/context-retriever.js";
 import { OpenAiClient } from "./ai/openai-client.js";
 import { NoteIndex } from "./core/note-index.js";
-import { LoopbackGoogleAuth, type GoogleTokenStore } from "./integrations/google-auth.js";
+import {
+  WorkerGoogleAuth,
+  type GoogleOAuthStateStore,
+  type GoogleTokenStore,
+} from "./integrations/google-auth.js";
 import { GoogleDriveClient } from "./integrations/google-drive.js";
 import { ObsidianRequestTransport } from "./obsidian/request-transport.js";
 import { ObsidianIndexWatcher } from "./obsidian/index-watcher.js";
@@ -28,6 +31,7 @@ export default class SecondBrainPlugin extends Plugin {
   private watcher?: ObsidianIndexWatcher;
   private statusBar?: SyncStatusBar;
   private syncTimer?: ReturnType<typeof setTimeout>;
+  private googleAuthClient!: WorkerGoogleAuth;
 
   async onload(): Promise<void> {
     this.pluginSettings = normalizeSettings(await this.loadData());
@@ -38,6 +42,10 @@ export default class SecondBrainPlugin extends Plugin {
 
     const transport = new ObsidianRequestTransport();
     const vault = new ObsidianVaultAdapter(this.app);
+    this.googleAuthClient = this.googleAuth(transport);
+    this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
+      void this.completeGoogleAuthorization(params, transport, vault);
+    });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
     await this.watcher.start();
@@ -52,6 +60,7 @@ export default class SecondBrainPlugin extends Plugin {
       async (settings) => {
         this.pluginSettings = settings;
         await this.saveSettings();
+        this.googleAuthClient = this.googleAuth(transport);
       },
       {
         reauthenticate: () => this.reauthenticate(transport),
@@ -97,18 +106,16 @@ export default class SecondBrainPlugin extends Plugin {
 
   private async syncNow(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
     if (this.pluginSettings.paused) return;
-    if (!this.pluginSettings.googleClientId || !this.pluginSettings.driveFolderId) {
-      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure Google client ID and Drive folder ID first"] });
+    if (!this.pluginSettings.syncServiceUrl || !this.pluginSettings.driveFolderId) {
+      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure the sync service URL and Drive folder ID first"] });
+      return;
+    }
+    if (!this.pluginSettings.googleToken) {
+      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: ["Authorize Google Drive in Sken Brain settings"] });
       return;
     }
     try {
-      const auth = this.googleAuth(transport);
-      try {
-        await auth.getAccessToken();
-      } catch {
-        await auth.authorize();
-      }
-      const drive = new GoogleDriveClient(transport, () => auth.getAccessToken());
+      const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
       this.showReport(await engine.sync());
     } catch (error) {
@@ -177,26 +184,59 @@ export default class SecondBrainPlugin extends Plugin {
 
   private async reauthenticate(transport: ObsidianRequestTransport): Promise<void> {
     try {
-      await this.googleAuth(transport).authorize();
+      this.googleAuthClient = this.googleAuth(transport);
+      await this.googleAuthClient.beginAuthorization();
+      new Notice("Continue Google authorization in your browser.");
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async completeGoogleAuthorization(
+    params: ObsidianProtocolData,
+    transport: ObsidianRequestTransport,
+    vault: ObsidianVaultAdapter,
+  ): Promise<void> {
+    try {
+      await this.googleAuthClient.completeAuthorization(params);
       new Notice("Google Drive authorized.");
+      await this.syncNow(transport, vault);
     } catch (error) {
       new Notice(error instanceof Error ? error.message : String(error));
     }
   }
 
   private async clearCredentials(): Promise<void> {
-    this.pluginSettings.googleToken = undefined;
-    await this.saveSettings();
+    await this.googleAuthClient.clear();
     new Notice("Google credentials cleared on this device.");
   }
 
-  private googleAuth(transport: ObsidianRequestTransport): LoopbackGoogleAuth {
+  private googleAuth(transport: ObsidianRequestTransport): WorkerGoogleAuth {
     const store: GoogleTokenStore = {
       load: async () => this.pluginSettings.googleToken,
       save: async (token) => { this.pluginSettings.googleToken = token; await this.saveSettings(); },
       clear: async () => { this.pluginSettings.googleToken = undefined; await this.saveSettings(); },
     };
-    return new LoopbackGoogleAuth({ clientId: this.pluginSettings.googleClientId }, transport, store, (url) => shell.openExternal(url));
+    const stateStore: GoogleOAuthStateStore = {
+      load: async () => this.pluginSettings.googleOAuthState,
+      save: async (state) => { this.pluginSettings.googleOAuthState = state; await this.saveSettings(); },
+      clear: async () => { this.pluginSettings.googleOAuthState = undefined; await this.saveSettings(); },
+    };
+    return new WorkerGoogleAuth(
+      { serviceUrl: this.pluginSettings.syncServiceUrl },
+      transport,
+      store,
+      stateStore,
+      () => {
+        const browser = window.open("about:blank", "_blank");
+        if (!browser) return undefined;
+        browser.opener = null;
+        return {
+          navigate: (url: string) => { browser.location.href = url; },
+          close: () => browser.close(),
+        };
+      },
+    );
   }
 
   private manifestStore(): DataManifestStore {
