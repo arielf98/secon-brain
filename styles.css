@@ -1,44 +1,107 @@
-.second-brain-related-notes {
+.sken-brain-related-notes {
   padding: var(--size-4-2);
 }
 
-.second-brain-related-notes h3 {
+.sken-brain-related-notes h3 {
   margin-top: 0;
 }
 
-.second-brain-related-card {
+.sken-brain-related-card {
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   margin: var(--size-4-2) 0;
   padding: var(--size-4-2);
 }
 
-.second-brain-related-card a {
+.sken-brain-related-card a {
   color: var(--text-accent);
   display: block;
   overflow-wrap: anywhere;
 }
 
-.second-brain-related-card p {
+.sken-brain-related-card p {
   color: var(--text-muted);
   font-size: var(--font-smaller);
   margin: var(--size-4-1) 0;
 }
 
-.second-brain-compact-button {
+.sken-brain-compact-button {
   font-size: var(--font-smaller);
 }
 
-.second-brain-ai-answer {
+.sken-brain-ai-answer {
   margin-top: var(--size-4-3);
-  white-space: pre-wrap;
 }
 
-.second-brain-modal-actions {
+.sken-brain-ai-modal {
   display: flex;
+  flex-direction: column;
+  max-height: min(78vh, 760px);
+  min-height: 0;
+}
+
+.sken-brain-ai-modal-body {
+  min-height: 0;
+  max-height: min(64vh, 600px);
+  overflow-y: auto;
+  padding-right: var(--size-4-2);
+}
+
+.sken-brain-ai-status {
+  align-items: center;
+  display: flex;
+  gap: var(--size-4-2);
+  min-height: var(--size-4-6);
+  padding: var(--size-4-2) 0;
+}
+
+.sken-brain-ai-status-error {
+  color: var(--text-error);
+}
+
+.sken-brain-ai-spinner {
+  animation: sken-brain-spin 0.8s linear infinite;
+  border: 2px solid var(--background-modifier-border);
+  border-radius: 50%;
+  border-top-color: var(--text-accent);
+  display: inline-block;
+  flex: 0 0 auto;
+  height: var(--size-4-3);
+  width: var(--size-4-3);
+}
+
+.sken-brain-ai-result {
+  padding-bottom: var(--size-4-2);
+}
+
+.sken-brain-ai-markdown {
+  margin-top: var(--size-4-2);
+}
+
+.sken-brain-ai-note-path,
+.sken-brain-ai-sources {
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+}
+
+.sken-brain-modal-actions {
+  background: var(--background-primary);
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex: 0 0 auto;
   gap: var(--size-4-2);
   justify-content: flex-end;
   margin-top: var(--size-4-3);
+  padding-top: var(--size-4-3);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+
+@keyframes sken-brain-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .status-bar-item[data-sync-status="conflict"] {
@@ -51,22 +114,22 @@
 }
 
 @media (max-width: 780px) {
-  .second-brain-related-notes {
+  .sken-brain-related-notes {
     max-height: 38vh;
     overflow-y: auto;
   }
 
-  .second-brain-related-card {
+  .sken-brain-related-card {
     display: grid;
     gap: var(--size-4-1);
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .second-brain-related-card p {
+  .sken-brain-related-card p {
     grid-column: 1 / -1;
   }
 
-  .second-brain-related-card button {
+  .sken-brain-related-card button {
     white-space: nowrap;
   }
 }

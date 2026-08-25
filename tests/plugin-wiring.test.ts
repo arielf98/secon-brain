@@ -21,12 +21,12 @@ test("registers all user-facing commands and the Related Notes view", () => {
   }, () => null);
 
   assert.deepEqual(commands, [
-    "second-brain:sync-now",
-    "second-brain:ask-vault",
-    "second-brain:summarize-note",
-    "second-brain:explain-relation",
-    "second-brain:extract-structure",
-    "second-brain:create-note",
+    "sken-brain:sync-now",
+    "sken-brain:ask-vault",
+    "sken-brain:summarize-note",
+    "sken-brain:explain-relation",
+    "sken-brain:extract-structure",
+    "sken-brain:create-note",
   ]);
   assert.equal(viewType, RELATED_NOTES_VIEW_TYPE);
 });

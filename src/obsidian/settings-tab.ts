@@ -3,9 +3,10 @@ import type { GoogleToken } from "../integrations/google-auth.js";
 import type { AiProvider } from "../ai/ai-types.js";
 
 export interface SecondBrainSettings {
-  googleClientId: string;
+  syncServiceUrl: string;
   driveFolderId: string;
   googleToken?: GoogleToken;
+  googleOAuthState?: string;
   provider: AiProvider;
   apiKey: string;
   baseUrl: string;
@@ -19,7 +20,7 @@ export interface SecondBrainSettings {
 }
 
 export const DEFAULT_SETTINGS: SecondBrainSettings = {
-  googleClientId: "",
+  syncServiceUrl: "",
   driveFolderId: "",
   provider: "openai",
   apiKey: "",
@@ -68,7 +69,7 @@ export class SecondBrainSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Second Brain" });
+    containerEl.createEl("h2", { text: "Sken Brain" });
     const settings = this.getSettings();
     const update = async (patch: Partial<SecondBrainSettings>): Promise<void> => {
       Object.assign(settings, patch);
@@ -76,16 +77,16 @@ export class SecondBrainSettingTab extends PluginSettingTab {
     };
 
     new Setting(containerEl)
-      .setName("Google desktop client ID")
-      .setDesc("Stored locally on this device.")
-      .addText((text) => text.setValue(settings.googleClientId).onChange((value) => update({ googleClientId: value.trim() })));
+      .setName("Sync service URL")
+      .setDesc("The HTTPS URL of your Sken Brain sync Worker.")
+      .addText((text) => text.setValue(settings.syncServiceUrl).onChange((value) => update({ syncServiceUrl: value.trim() })));
     new Setting(containerEl)
       .setName("Drive folder ID")
       .setDesc("The Google Drive folder mirrored by this vault.")
       .addText((text) => text.setValue(settings.driveFolderId).onChange((value) => update({ driveFolderId: value.trim() })));
     new Setting(containerEl)
       .setName("Google authorization")
-      .addButton((button) => button.setButtonText("Re-authenticate").onClick(() => this.actions.reauthenticate()))
+      .addButton((button) => button.setButtonText("Authorize Google Drive").onClick(() => this.actions.reauthenticate()))
       .addButton((button) => button.setButtonText("Clear credentials").onClick(() => this.actions.clearCredentials()));
 
     new Setting(containerEl)

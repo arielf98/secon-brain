@@ -24,7 +24,6 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian6 = require("obsidian");
-var import_electron = require("electron");
 
 // src/integrations/http.ts
 var HttpError = class extends Error {
@@ -138,7 +137,8 @@ var DeepSeekClient = class {
       body: JSON.stringify({
         model: this.settings.model,
         messages,
-        max_tokens: (_a = request.maxOutputTokens) != null ? _a : this.settings.maxOutputTokens
+        max_tokens: (_a = request.maxOutputTokens) != null ? _a : this.settings.maxOutputTokens,
+        thinking: { type: "enabled" }
       })
     });
     const payload = responseJson(requireSuccess(response));
@@ -430,168 +430,106 @@ function overlapCount(left, right) {
 }
 
 // src/integrations/google-auth.ts
-var import_node_http = require("node:http");
-var AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
-var TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-var DEFAULT_SCOPE = "https://www.googleapis.com/auth/drive";
 var OAuthAuthorizationError = class extends Error {
   constructor(message) {
     super(message);
     this.name = "OAuthAuthorizationError";
   }
 };
-function base64Url(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-async function createPkcePair() {
-  const verifierBytes = new Uint8Array(32);
-  crypto.getRandomValues(verifierBytes);
-  const verifier = base64Url(verifierBytes);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  return { verifier, challenge: base64Url(new Uint8Array(digest)) };
-}
-function buildAuthorizationUrl(config, redirectUri, state, challenge) {
-  var _a;
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: config.clientId,
-    redirect_uri: redirectUri,
-    scope: (((_a = config.scopes) == null ? void 0 : _a.length) ? config.scopes : [DEFAULT_SCOPE]).join(" "),
-    state,
-    access_type: "offline",
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    prompt: "consent"
-  });
-  return `${AUTHORIZATION_ENDPOINT}?${params.toString()}`;
-}
-function parseAuthorizationResponse(callbackUrl, expectedState) {
-  const params = new URL(callbackUrl).searchParams;
-  const error = params.get("error");
-  if (error) throw new OAuthAuthorizationError(`Google authorization failed: ${error}`);
-  const state = params.get("state");
-  const code = params.get("code");
-  if (!state || state !== expectedState) throw new OAuthAuthorizationError("Google authorization state did not match");
-  if (!code) throw new OAuthAuthorizationError("Google authorization did not return a code");
-  return { code, state };
-}
-function tokenFromResponse(value, refreshToken) {
-  var _a, _b;
-  if (!value.access_token) throw new OAuthAuthorizationError("Google token response did not include an access token");
-  return {
-    accessToken: value.access_token,
-    refreshToken: (_a = value.refresh_token) != null ? _a : refreshToken,
-    expiresAt: Date.now() + ((_b = value.expires_in) != null ? _b : 3600) * 1e3
-  };
-}
-var GoogleAuthClient = class {
-  constructor(config, transport) {
-    this.config = config;
-    this.transport = transport;
-  }
-  async exchangeCode(code, verifier, redirectUri) {
-    const response = await this.transport.request({
-      method: "POST",
-      url: TOKEN_ENDPOINT,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: this.config.clientId,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-        code_verifier: verifier
-      }).toString()
-    });
-    return tokenFromResponse(responseJson(requireSuccess(response)));
-  }
-  async refreshAccessToken(refreshToken) {
-    const response = await this.transport.request({
-      method: "POST",
-      url: TOKEN_ENDPOINT,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        refresh_token: refreshToken,
-        client_id: this.config.clientId,
-        grant_type: "refresh_token"
-      }).toString()
-    });
-    return tokenFromResponse(responseJson(requireSuccess(response)), refreshToken);
-  }
-};
-var LoopbackGoogleAuth = class {
-  constructor(config, transport, tokenStore, openExternal) {
+var WorkerGoogleAuth = class {
+  constructor(config, transport, tokenStore, stateStore, reserveBrowser) {
     this.config = config;
     this.transport = transport;
     this.tokenStore = tokenStore;
-    this.openExternal = openExternal;
+    this.stateStore = stateStore;
+    this.reserveBrowser = reserveBrowser;
   }
-  async authorize() {
-    const pkce = await createPkcePair();
-    const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
-    let callbackUrl = "";
-    const server = (0, import_node_http.createServer)((request, response) => {
-      var _a;
-      callbackUrl = `http://127.0.0.1:${port}${(_a = request.url) != null ? _a : "/"}`;
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "text/plain; charset=utf-8");
-      response.end("Second Brain authorization complete. You can close this window.");
-    });
-    let port = 0;
+  async beginAuthorization() {
+    const state = randomState();
+    const url = new URL(this.endpoint("/oauth/start"));
+    url.searchParams.set("state", state);
+    const browser = this.reserveBrowser();
+    if (!browser) throw new OAuthAuthorizationError("Could not open the browser for Google authorization");
     try {
-      await new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => {
-          const address = server.address();
-          if (!address || typeof address === "string") {
-            reject(new OAuthAuthorizationError("Could not open the Google OAuth callback"));
-            return;
-          }
-          port = address.port;
-          resolve();
-        });
-      });
-      const redirectUri = `http://127.0.0.1:${port}`;
-      await this.openExternal(buildAuthorizationUrl(this.config, redirectUri, state, pkce.challenge));
-      const callback = await waitForCallback(server, () => callbackUrl);
-      const authorization = parseAuthorizationResponse(callback, state);
-      const token = await new GoogleAuthClient(this.config, this.transport).exchangeCode(authorization.code, pkce.verifier, redirectUri);
-      await this.tokenStore.save(token);
-      return token;
-    } finally {
-      server.close();
+      await this.stateStore.save(state);
+      browser.navigate(url.toString());
+    } catch (error) {
+      browser.close();
+      await this.stateStore.clear();
+      throw error;
     }
   }
-  async refresh(token) {
-    if (!token.refreshToken) throw new OAuthAuthorizationError("Google authorization has no refresh token");
-    const refreshed = await new GoogleAuthClient(this.config, this.transport).refreshAccessToken(token.refreshToken);
-    await this.tokenStore.save(refreshed);
-    return refreshed;
+  async completeAuthorization(params) {
+    const expectedState = await this.stateStore.load();
+    if (!expectedState || params.state !== expectedState) {
+      throw new OAuthAuthorizationError("Google authorization state did not match");
+    }
+    if (params.error) {
+      await this.stateStore.clear();
+      throw new OAuthAuthorizationError(`Google authorization failed: ${params.error}`);
+    }
+    if (!params.code) throw new OAuthAuthorizationError("Google authorization did not return a code");
+    const response = requireSuccess(await this.transport.request({
+      method: "POST",
+      url: this.endpoint("/oauth/exchange"),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: params.code })
+    }));
+    const token = validToken(responseJson(response));
+    await this.tokenStore.save(token);
+    await this.stateStore.clear();
+    return token;
   }
   async clear() {
-    await this.tokenStore.clear();
+    await Promise.all([this.tokenStore.clear(), this.stateStore.clear()]);
   }
   async getAccessToken() {
     const token = await this.tokenStore.load();
     if (!token) throw new OAuthAuthorizationError("Google authorization is required");
     if (token.expiresAt > Date.now() + 6e4) return token.accessToken;
-    return (await this.refresh(token)).accessToken;
+    if (!token.refreshToken) throw new OAuthAuthorizationError("Google authorization has no refresh token");
+    const response = requireSuccess(await this.transport.request({
+      method: "POST",
+      url: this.endpoint("/oauth/refresh"),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: token.refreshToken })
+    }));
+    const refreshed = validToken(responseJson(response), token.refreshToken);
+    await this.tokenStore.save(refreshed);
+    return refreshed.accessToken;
+  }
+  endpoint(path) {
+    const value = this.config.serviceUrl.trim();
+    if (!value) throw new OAuthAuthorizationError("Configure the sync service URL first");
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new OAuthAuthorizationError("Sync service URL is invalid");
+    }
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname))) {
+      throw new OAuthAuthorizationError("Sync service URL must use HTTPS");
+    }
+    return new URL(path, `${url.origin}/`).toString();
   }
 };
-function waitForCallback(server, getUrl) {
-  return new Promise((resolve, reject) => {
-    const timer = setInterval(() => {
-      const url = getUrl();
-      if (!url) return;
-      clearInterval(timer);
-      resolve(url);
-    }, 25);
-    server.once("error", (error) => {
-      clearInterval(timer);
-      reject(error);
-    });
-  });
+function validToken(value, refreshToken) {
+  if (!value || typeof value !== "object") throw new OAuthAuthorizationError("Sync service returned an invalid token");
+  const token = value;
+  if (typeof token.accessToken !== "string" || typeof token.expiresAt !== "number") {
+    throw new OAuthAuthorizationError("Sync service returned an invalid token");
+  }
+  return {
+    accessToken: token.accessToken,
+    refreshToken: typeof token.refreshToken === "string" ? token.refreshToken : refreshToken,
+    expiresAt: token.expiresAt
+  };
+}
+function randomState() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 // src/integrations/google-drive.ts
@@ -835,6 +773,18 @@ function isMarkdownFile(file) {
 
 // src/obsidian/ask-vault-modal.ts
 var import_obsidian2 = require("obsidian");
+
+// src/obsidian/ai-request.ts
+async function runAiRequest(request, onState) {
+  onState({ status: "loading" });
+  try {
+    onState({ status: "ready", value: await request() });
+  } catch (error) {
+    onState({ status: "error", message: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+// src/obsidian/ask-vault-modal.ts
 var AskVaultModal = class extends import_obsidian2.Modal {
   constructor(app, ask) {
     super(app);
@@ -844,6 +794,8 @@ var AskVaultModal = class extends import_obsidian2.Modal {
     this.renderForm();
   }
   onClose() {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
     this.contentEl.empty();
   }
   renderForm() {
@@ -852,51 +804,165 @@ var AskVaultModal = class extends import_obsidian2.Modal {
     container.createEl("h2", { text: "Ask Vault" });
     const input = container.createEl("textarea", { placeholder: "Ask about your notes..." });
     input.rows = 4;
-    const answer = container.createDiv({ cls: "second-brain-ai-answer" });
-    container.createEl("button", { text: "Ask" }).addEventListener("click", async () => {
+    const answer = container.createDiv({ cls: "sken-brain-ai-answer" });
+    const askButton = container.createEl("button", { text: "Ask" });
+    askButton.addEventListener("click", async () => {
       const query = input.value.trim();
       if (!query) return;
-      answer.setText("Thinking\u2026");
-      try {
-        const preview = await this.ask(query);
+      await runAiRequest(() => this.ask(query), (state) => {
         answer.empty();
-        answer.createEl("p", { text: preview.text });
-        if (preview.sources.length) answer.createEl("small", { text: `Sources: ${preview.sources.join(", ")}` });
-      } catch (error) {
-        answer.setText(error instanceof Error ? error.message : String(error));
-      }
+        answer.className = "sken-brain-ai-answer";
+        askButton.disabled = state.status === "loading";
+        askButton.setText(state.status === "loading" ? "Processing\u2026" : "Ask");
+        if (state.status === "loading") {
+          const spinner = answer.createSpan({ cls: "sken-brain-ai-spinner" });
+          spinner.setAttribute("aria-hidden", "true");
+          answer.createSpan({ text: "AI sedang memproses\u2026" });
+        } else if (state.status === "error") {
+          answer.addClass("sken-brain-ai-status-error");
+          answer.setText(state.message);
+        } else {
+          this.renderAnswer(answer, state.value);
+        }
+      });
     });
+  }
+  renderAnswer(container, preview) {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.markdownComponent = new import_obsidian2.Component();
+    this.markdownComponent.load();
+    const result = container.createDiv({ cls: "sken-brain-ai-markdown" });
+    void import_obsidian2.MarkdownRenderer.render(this.app, preview.text, result, "", this.markdownComponent).catch((error) => {
+      container.setText(error instanceof Error ? error.message : String(error));
+    });
+    if (preview.sources.length) container.createEl("small", { text: `Sources: ${preview.sources.join(", ")}` });
   }
 };
 
 // src/obsidian/preview-modal.ts
 var import_obsidian3 = require("obsidian");
 var PreviewModal = class extends import_obsidian3.Modal {
-  constructor(app, preview, apply) {
+  constructor(app, loadingTitle, apply) {
     super(app);
-    this.preview = preview;
     this.apply = apply;
+    this.loadingTitle = loadingTitle;
   }
   onOpen() {
-    const container = this.contentEl;
-    container.empty();
-    container.createEl("h2", { text: this.preview.title });
-    container.createEl("pre", { text: this.preview.text });
-    if (this.preview.sources.length) container.createEl("p", { text: `Sources: ${this.preview.sources.join(", ")}` });
-    if (this.preview.proposed) container.createEl("pre", { text: JSON.stringify(this.preview.proposed, null, 2) });
-    const error = container.createDiv();
-    const actions = container.createDiv({ cls: "second-brain-modal-actions" });
+    this.renderLayout();
+    this.setState({ status: "loading" });
+  }
+  onClose() {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.contentEl.empty();
+  }
+  setState(state) {
+    var _a, _b;
+    if (!this.bodyEl || !this.applyButton) return;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.markdownComponent = void 0;
+    this.bodyEl.empty();
+    this.statusEl = this.bodyEl.createDiv({ cls: "sken-brain-ai-status" });
+    this.statusEl.setAttribute("role", "status");
+    this.statusEl.setAttribute("aria-live", "polite");
+    this.statusEl.className = "sken-brain-ai-status";
+    this.applyButton.style.display = "none";
+    this.applyButton.disabled = true;
+    if (state.status === "loading") {
+      this.renderLoading();
+      return;
+    }
+    if (state.status === "error") {
+      this.renderError(state.message);
+      return;
+    }
+    this.preview = state.value;
+    (_b = this.headingEl) == null ? void 0 : _b.setText(state.value.title);
+    this.renderPreview(state.value);
+    this.applyButton.style.display = "";
+    this.applyButton.disabled = false;
+  }
+  renderLayout() {
+    this.contentEl.empty();
+    this.contentEl.addClass("sken-brain-ai-modal");
+    this.headingEl = this.contentEl.createEl("h2", { text: this.loadingTitle });
+    this.bodyEl = this.contentEl.createDiv({ cls: "sken-brain-ai-modal-body" });
+    this.statusEl = this.bodyEl.createDiv({ cls: "sken-brain-ai-status" });
+    this.statusEl.setAttribute("role", "status");
+    this.statusEl.setAttribute("aria-live", "polite");
+    const actions = this.contentEl.createDiv({ cls: "sken-brain-modal-actions" });
     actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
-    const apply = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
-    apply.addEventListener("click", async () => {
-      apply.disabled = true;
+    this.applyButton = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
+    this.applyButton.style.display = "none";
+    this.applyButton.disabled = true;
+    this.applyButton.addEventListener("click", async () => {
+      if (!this.preview || !this.applyButton) return;
+      this.applyButton.disabled = true;
       try {
         await this.apply(this.preview);
         this.close();
       } catch (reason) {
-        apply.disabled = false;
-        error.setText(reason instanceof Error ? reason.message : String(reason));
+        this.applyButton.disabled = false;
+        this.showError(reason instanceof Error ? reason.message : String(reason));
       }
+    });
+  }
+  renderLoading() {
+    const spinner = this.statusEl.createSpan({ cls: "sken-brain-ai-spinner" });
+    spinner.setAttribute("aria-hidden", "true");
+    this.statusEl.createSpan({ text: "AI sedang memproses\u2026" });
+  }
+  renderError(message) {
+    this.statusEl.addClass("sken-brain-ai-status-error");
+    this.statusEl.createSpan({ text: message });
+  }
+  showError(message) {
+    this.statusEl.empty();
+    this.statusEl.className = "sken-brain-ai-status sken-brain-ai-status-error";
+    this.statusEl.createSpan({ text: message });
+  }
+  renderPreview(preview) {
+    const result = this.bodyEl.createDiv({ cls: "sken-brain-ai-result" });
+    if (preview.type === "extract-structure" && preview.proposed) {
+      this.renderProposedStructure(result, preview.proposed);
+    } else if (preview.type === "create-note" && preview.changes[0]) {
+      result.createEl("h3", { text: "New note" });
+      result.createEl("p", { text: preview.changes[0].path, cls: "sken-brain-ai-note-path" });
+      const noteContent = result.createDiv({ cls: "sken-brain-ai-markdown" });
+      this.renderMarkdown(preview.changes[0].content, noteContent);
+    } else {
+      this.renderMarkdown(preview.text, result);
+    }
+    if (preview.sources.length) {
+      result.createEl("p", { text: `Sources: ${preview.sources.join(", ")}`, cls: "sken-brain-ai-sources" });
+    }
+  }
+  renderProposedStructure(container, proposed) {
+    const groups = [
+      ["Tags", proposed.tags],
+      ["Tasks", proposed.tasks],
+      ["Links", proposed.links]
+    ];
+    const hasSuggestions = groups.some(([, items]) => items.length > 0);
+    if (!hasSuggestions) {
+      container.createEl("p", { text: "No structured suggestions returned." });
+      return;
+    }
+    for (const [label, items] of groups) {
+      if (!items.length) continue;
+      container.createEl("h3", { text: label });
+      const list = container.createEl("ul");
+      for (const item of items) list.createEl("li", { text: item });
+    }
+  }
+  renderMarkdown(markdown, container) {
+    var _a;
+    (_a = this.markdownComponent) == null ? void 0 : _a.unload();
+    this.markdownComponent = new import_obsidian3.Component();
+    this.markdownComponent.load();
+    void import_obsidian3.MarkdownRenderer.render(this.app, markdown, container, "", this.markdownComponent).catch((error) => {
+      this.showError(error instanceof Error ? error.message : String(error));
     });
   }
 };
@@ -905,15 +971,15 @@ var PreviewModal = class extends import_obsidian3.Modal {
 var import_obsidian4 = require("obsidian");
 
 // src/obsidian/plugin-wiring.ts
-var RELATED_NOTES_VIEW_TYPE = "second-brain-related-notes";
+var RELATED_NOTES_VIEW_TYPE = "sken-brain-related-notes";
 function registerSecondBrainCommands(plugin, actions, createRelatedView) {
   const commands = [
-    ["second-brain:sync-now", "Sync Now", actions.syncNow],
-    ["second-brain:ask-vault", "Ask Vault", actions.askVault],
-    ["second-brain:summarize-note", "Summarize Note", actions.summarizeNote],
-    ["second-brain:explain-relation", "Explain relation", actions.explainRelation],
-    ["second-brain:extract-structure", "Extract structure", actions.extractStructure],
-    ["second-brain:create-note", "Create note from prompt", actions.createNote]
+    ["sken-brain:sync-now", "Sync Now", actions.syncNow],
+    ["sken-brain:ask-vault", "Ask Vault", actions.askVault],
+    ["sken-brain:summarize-note", "Summarize Note", actions.summarizeNote],
+    ["sken-brain:explain-relation", "Explain relation", actions.explainRelation],
+    ["sken-brain:extract-structure", "Extract structure", actions.extractStructure],
+    ["sken-brain:create-note", "Create note from prompt", actions.createNote]
   ];
   for (const [id, name, callback] of commands) plugin.addCommand({ id, name, callback });
   plugin.registerView(RELATED_NOTES_VIEW_TYPE, createRelatedView);
@@ -950,7 +1016,7 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
   render() {
     const container = this.contentEl;
     container.empty();
-    container.addClass("second-brain-related-notes");
+    container.addClass("sken-brain-related-notes");
     container.createEl("h3", { text: "Related Notes" });
     if (!this.activePath) {
       container.createEl("p", { text: "Open a Markdown note to see contextual suggestions." });
@@ -962,10 +1028,10 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
       return;
     }
     for (const item of related) {
-      const card = container.createDiv({ cls: "second-brain-related-card" });
+      const card = container.createDiv({ cls: "sken-brain-related-card" });
       card.createEl("a", { text: item.path, href: `#${item.path}` });
       card.createEl("p", { text: item.reasons.join(" \xB7 ") });
-      card.createEl("button", { text: "Explain relation", cls: "second-brain-compact-button" }).addEventListener("click", () => void this.onExplain(this.activePath, item.path));
+      card.createEl("button", { text: "Explain relation", cls: "sken-brain-compact-button" }).addEventListener("click", () => void this.onExplain(this.activePath, item.path));
     }
   }
 };
@@ -973,7 +1039,7 @@ var RelatedNotesView = class extends import_obsidian4.ItemView {
 // src/obsidian/settings-tab.ts
 var import_obsidian5 = require("obsidian");
 var DEFAULT_SETTINGS = {
-  googleClientId: "",
+  syncServiceUrl: "",
   driveFolderId: "",
   provider: "openai",
   apiKey: "",
@@ -1008,15 +1074,15 @@ var SecondBrainSettingTab = class extends import_obsidian5.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Second Brain" });
+    containerEl.createEl("h2", { text: "Sken Brain" });
     const settings = this.getSettings();
     const update = async (patch) => {
       Object.assign(settings, patch);
       await this.saveSettings(settings);
     };
-    new import_obsidian5.Setting(containerEl).setName("Google desktop client ID").setDesc("Stored locally on this device.").addText((text) => text.setValue(settings.googleClientId).onChange((value) => update({ googleClientId: value.trim() })));
+    new import_obsidian5.Setting(containerEl).setName("Sync service URL").setDesc("The HTTPS URL of your Sken Brain sync Worker.").addText((text) => text.setValue(settings.syncServiceUrl).onChange((value) => update({ syncServiceUrl: value.trim() })));
     new import_obsidian5.Setting(containerEl).setName("Drive folder ID").setDesc("The Google Drive folder mirrored by this vault.").addText((text) => text.setValue(settings.driveFolderId).onChange((value) => update({ driveFolderId: value.trim() })));
-    new import_obsidian5.Setting(containerEl).setName("Google authorization").addButton((button) => button.setButtonText("Re-authenticate").onClick(() => this.actions.reauthenticate())).addButton((button) => button.setButtonText("Clear credentials").onClick(() => this.actions.clearCredentials()));
+    new import_obsidian5.Setting(containerEl).setName("Google authorization").addButton((button) => button.setButtonText("Authorize Google Drive").onClick(() => this.actions.reauthenticate())).addButton((button) => button.setButtonText("Clear credentials").onClick(() => this.actions.clearCredentials()));
     new import_obsidian5.Setting(containerEl).setName("AI provider").addDropdown((dropdown) => dropdown.addOption("openai", "OpenAI").addOption("deepseek", "DeepSeek").setValue(settings.provider).onChange((value) => update({ provider: value })));
     new import_obsidian5.Setting(containerEl).setName("API key").setDesc("Stored locally and never synced.").addText((text) => {
       text.setValue(settings.apiKey).onChange((value) => update({ apiKey: value }));
@@ -1388,6 +1454,10 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     }
     const transport = new ObsidianRequestTransport();
     const vault = new ObsidianVaultAdapter(this.app);
+    this.googleAuthClient = this.googleAuth(transport);
+    this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
+      void this.completeGoogleAuthorization(params, transport, vault);
+    });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
     await this.watcher.start();
@@ -1396,7 +1466,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       return (_a2 = this.watcher) == null ? void 0 : _a2.stop();
     });
     this.statusBar = new SyncStatusBar(this.addStatusBarItem());
-    this.statusBar.setText("Second Brain");
+    this.statusBar.setText("Sken Brain");
     this.addSettingTab(new SecondBrainSettingTab(
       this.app,
       this,
@@ -1404,6 +1474,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       async (settings) => {
         this.pluginSettings = settings;
         await this.saveSettings();
+        this.googleAuthClient = this.googleAuth(transport);
       },
       {
         reauthenticate: () => this.reauthenticate(transport),
@@ -1449,18 +1520,16 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
   }
   async syncNow(transport, vault) {
     if (this.pluginSettings.paused) return;
-    if (!this.pluginSettings.googleClientId || !this.pluginSettings.driveFolderId) {
-      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure Google client ID and Drive folder ID first"] });
+    if (!this.pluginSettings.syncServiceUrl || !this.pluginSettings.driveFolderId) {
+      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure the sync service URL and Drive folder ID first"] });
+      return;
+    }
+    if (!this.pluginSettings.googleToken) {
+      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: ["Authorize Google Drive in Sken Brain settings"] });
       return;
     }
     try {
-      const auth = this.googleAuth(transport);
-      try {
-        await auth.getAccessToken();
-      } catch {
-        await auth.authorize();
-      }
-      const drive = new GoogleDriveClient(transport, () => auth.getAccessToken());
+      const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
       this.showReport(await engine.sync());
     } catch (error) {
@@ -1475,7 +1544,7 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.summarizeNote(path), commands);
+    await this.openPreview("Summarize note", () => commands.summarizeNote(path), commands);
   }
   async explainRelation(activePath, relatedPath, transport, vault) {
     var _a;
@@ -1483,30 +1552,28 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     const target = relatedPath != null ? relatedPath : (_a = this.index.related(activePath, 1)[0]) == null ? void 0 : _a.path;
     const commands = this.aiCommands(transport, vault);
     if (!target || !commands) return;
-    await this.openPreview(commands.explainRelation(activePath, target), commands);
+    await this.openPreview("Explain relation", () => commands.explainRelation(activePath, target), commands);
   }
   async extractStructure(transport, vault) {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.extractStructure(path), commands);
+    await this.openPreview("Extract structure", () => commands.extractStructure(path), commands);
   }
   async createNote(transport, vault) {
     const prompt = window.prompt("Create note from prompt");
     const commands = this.aiCommands(transport, vault);
     if (!prompt || !commands) return;
-    await this.openPreview(commands.createNote(prompt), commands);
+    await this.openPreview("Create note from prompt", () => commands.createNote(prompt), commands);
   }
-  async openPreview(previewPromise, commands) {
-    try {
-      new PreviewModal(this.app, await previewPromise, (preview) => commands.applyPreview(preview)).open();
-    } catch (error) {
-      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
-    }
+  async openPreview(title, request, commands) {
+    const modal = new PreviewModal(this.app, title, (preview) => commands.applyPreview(preview));
+    modal.open();
+    await runAiRequest(request, (state) => modal.setState(state));
   }
   aiCommands(transport, vault) {
     if (!this.pluginSettings.apiKey || !this.pluginSettings.model) {
-      new import_obsidian6.Notice("Configure an AI provider, API key, and model in Second Brain settings.");
+      new import_obsidian6.Notice("Configure an AI provider, API key, and model in Sken Brain settings.");
       return void 0;
     }
     const settings = {
@@ -1522,15 +1589,24 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
   }
   async reauthenticate(transport) {
     try {
-      await this.googleAuth(transport).authorize();
+      this.googleAuthClient = this.googleAuth(transport);
+      await this.googleAuthClient.beginAuthorization();
+      new import_obsidian6.Notice("Continue Google authorization in your browser.");
+    } catch (error) {
+      new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
+    }
+  }
+  async completeGoogleAuthorization(params, transport, vault) {
+    try {
+      await this.googleAuthClient.completeAuthorization(params);
       new import_obsidian6.Notice("Google Drive authorized.");
+      await this.syncNow(transport, vault);
     } catch (error) {
       new import_obsidian6.Notice(error instanceof Error ? error.message : String(error));
     }
   }
   async clearCredentials() {
-    this.pluginSettings.googleToken = void 0;
-    await this.saveSettings();
+    await this.googleAuthClient.clear();
     new import_obsidian6.Notice("Google credentials cleared on this device.");
   }
   googleAuth(transport) {
@@ -1545,7 +1621,34 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
         await this.saveSettings();
       }
     };
-    return new LoopbackGoogleAuth({ clientId: this.pluginSettings.googleClientId }, transport, store, (url) => import_electron.shell.openExternal(url));
+    const stateStore = {
+      load: async () => this.pluginSettings.googleOAuthState,
+      save: async (state) => {
+        this.pluginSettings.googleOAuthState = state;
+        await this.saveSettings();
+      },
+      clear: async () => {
+        this.pluginSettings.googleOAuthState = void 0;
+        await this.saveSettings();
+      }
+    };
+    return new WorkerGoogleAuth(
+      { serviceUrl: this.pluginSettings.syncServiceUrl },
+      transport,
+      store,
+      stateStore,
+      () => {
+        const browser = window.open("about:blank", "_blank");
+        if (!browser) return void 0;
+        browser.opener = null;
+        return {
+          navigate: (url) => {
+            browser.location.href = url;
+          },
+          close: () => browser.close()
+        };
+      }
+    );
   }
   manifestStore() {
     return new DataManifestStore(

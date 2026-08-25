@@ -1,15 +1,20 @@
-import { Notice, Plugin } from "obsidian";
-import { shell } from "electron";
+import { Notice, Plugin, type ObsidianProtocolData } from "obsidian";
 import { DeepSeekClient } from "./ai/deepseek-client.js";
 import { AiCommands } from "./ai/ai-commands.js";
+import type { AiPreview } from "./ai/ai-types.js";
 import { LocalContextRetriever } from "./ai/context-retriever.js";
 import { OpenAiClient } from "./ai/openai-client.js";
 import { NoteIndex } from "./core/note-index.js";
-import { LoopbackGoogleAuth, type GoogleTokenStore } from "./integrations/google-auth.js";
+import {
+  WorkerGoogleAuth,
+  type GoogleOAuthStateStore,
+  type GoogleTokenStore,
+} from "./integrations/google-auth.js";
 import { GoogleDriveClient } from "./integrations/google-drive.js";
 import { ObsidianRequestTransport } from "./obsidian/request-transport.js";
 import { ObsidianIndexWatcher } from "./obsidian/index-watcher.js";
 import { AskVaultModal } from "./obsidian/ask-vault-modal.js";
+import { runAiRequest } from "./obsidian/ai-request.js";
 import { PreviewModal } from "./obsidian/preview-modal.js";
 import { RelatedNotesView } from "./obsidian/related-notes-view.js";
 import { RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands } from "./obsidian/plugin-wiring.js";
@@ -26,6 +31,7 @@ export default class SecondBrainPlugin extends Plugin {
   private watcher?: ObsidianIndexWatcher;
   private statusBar?: SyncStatusBar;
   private syncTimer?: ReturnType<typeof setTimeout>;
+  private googleAuthClient!: WorkerGoogleAuth;
 
   async onload(): Promise<void> {
     this.pluginSettings = normalizeSettings(await this.loadData());
@@ -36,13 +42,17 @@ export default class SecondBrainPlugin extends Plugin {
 
     const transport = new ObsidianRequestTransport();
     const vault = new ObsidianVaultAdapter(this.app);
+    this.googleAuthClient = this.googleAuth(transport);
+    this.registerObsidianProtocolHandler("sken-brain-auth", (params) => {
+      void this.completeGoogleAuthorization(params, transport, vault);
+    });
     this.index = new NoteIndex();
     this.watcher = new ObsidianIndexWatcher(this.app, this.index, (event) => this.registerEvent(event));
     await this.watcher.start();
     this.register(() => this.watcher?.stop());
 
     this.statusBar = new SyncStatusBar(this.addStatusBarItem());
-    this.statusBar.setText("Second Brain");
+    this.statusBar.setText("Sken Brain");
     this.addSettingTab(new SecondBrainSettingTab(
       this.app,
       this,
@@ -50,6 +60,7 @@ export default class SecondBrainPlugin extends Plugin {
       async (settings) => {
         this.pluginSettings = settings;
         await this.saveSettings();
+        this.googleAuthClient = this.googleAuth(transport);
       },
       {
         reauthenticate: () => this.reauthenticate(transport),
@@ -95,18 +106,16 @@ export default class SecondBrainPlugin extends Plugin {
 
   private async syncNow(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
     if (this.pluginSettings.paused) return;
-    if (!this.pluginSettings.googleClientId || !this.pluginSettings.driveFolderId) {
-      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure Google client ID and Drive folder ID first"] });
+    if (!this.pluginSettings.syncServiceUrl || !this.pluginSettings.driveFolderId) {
+      this.showReport({ status: "offline", uploaded: [], downloaded: [], conflicts: [], errors: ["Configure the sync service URL and Drive folder ID first"] });
+      return;
+    }
+    if (!this.pluginSettings.googleToken) {
+      this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: ["Authorize Google Drive in Sken Brain settings"] });
       return;
     }
     try {
-      const auth = this.googleAuth(transport);
-      try {
-        await auth.getAccessToken();
-      } catch {
-        await auth.authorize();
-      }
-      const drive = new GoogleDriveClient(transport, () => auth.getAccessToken());
+      const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
       this.showReport(await engine.sync());
     } catch (error) {
@@ -123,7 +132,7 @@ export default class SecondBrainPlugin extends Plugin {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.summarizeNote(path), commands);
+    await this.openPreview("Summarize note", () => commands.summarizeNote(path), commands);
   }
 
   private async explainRelation(activePath: string, relatedPath: string | undefined, transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
@@ -131,34 +140,32 @@ export default class SecondBrainPlugin extends Plugin {
     const target = relatedPath ?? this.index.related(activePath, 1)[0]?.path;
     const commands = this.aiCommands(transport, vault);
     if (!target || !commands) return;
-    await this.openPreview(commands.explainRelation(activePath, target), commands);
+    await this.openPreview("Explain relation", () => commands.explainRelation(activePath, target), commands);
   }
 
   private async extractStructure(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
     const path = this.activePath();
     const commands = this.aiCommands(transport, vault);
     if (!path || !commands) return;
-    await this.openPreview(commands.extractStructure(path), commands);
+    await this.openPreview("Extract structure", () => commands.extractStructure(path), commands);
   }
 
   private async createNote(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): Promise<void> {
     const prompt = window.prompt("Create note from prompt");
     const commands = this.aiCommands(transport, vault);
     if (!prompt || !commands) return;
-    await this.openPreview(commands.createNote(prompt), commands);
+    await this.openPreview("Create note from prompt", () => commands.createNote(prompt), commands);
   }
 
-  private async openPreview(previewPromise: ReturnType<AiCommands["summarizeNote"]>, commands: AiCommands): Promise<void> {
-    try {
-      new PreviewModal(this.app, await previewPromise, (preview) => commands.applyPreview(preview)).open();
-    } catch (error) {
-      new Notice(error instanceof Error ? error.message : String(error));
-    }
+  private async openPreview(title: string, request: () => Promise<AiPreview>, commands: AiCommands): Promise<void> {
+    const modal = new PreviewModal(this.app, title, (preview) => commands.applyPreview(preview));
+    modal.open();
+    await runAiRequest(request, (state) => modal.setState(state));
   }
 
   private aiCommands(transport: ObsidianRequestTransport, vault: ObsidianVaultAdapter): AiCommands | undefined {
     if (!this.pluginSettings.apiKey || !this.pluginSettings.model) {
-      new Notice("Configure an AI provider, API key, and model in Second Brain settings.");
+      new Notice("Configure an AI provider, API key, and model in Sken Brain settings.");
       return undefined;
     }
     const settings = {
@@ -177,26 +184,59 @@ export default class SecondBrainPlugin extends Plugin {
 
   private async reauthenticate(transport: ObsidianRequestTransport): Promise<void> {
     try {
-      await this.googleAuth(transport).authorize();
+      this.googleAuthClient = this.googleAuth(transport);
+      await this.googleAuthClient.beginAuthorization();
+      new Notice("Continue Google authorization in your browser.");
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async completeGoogleAuthorization(
+    params: ObsidianProtocolData,
+    transport: ObsidianRequestTransport,
+    vault: ObsidianVaultAdapter,
+  ): Promise<void> {
+    try {
+      await this.googleAuthClient.completeAuthorization(params);
       new Notice("Google Drive authorized.");
+      await this.syncNow(transport, vault);
     } catch (error) {
       new Notice(error instanceof Error ? error.message : String(error));
     }
   }
 
   private async clearCredentials(): Promise<void> {
-    this.pluginSettings.googleToken = undefined;
-    await this.saveSettings();
+    await this.googleAuthClient.clear();
     new Notice("Google credentials cleared on this device.");
   }
 
-  private googleAuth(transport: ObsidianRequestTransport): LoopbackGoogleAuth {
+  private googleAuth(transport: ObsidianRequestTransport): WorkerGoogleAuth {
     const store: GoogleTokenStore = {
       load: async () => this.pluginSettings.googleToken,
       save: async (token) => { this.pluginSettings.googleToken = token; await this.saveSettings(); },
       clear: async () => { this.pluginSettings.googleToken = undefined; await this.saveSettings(); },
     };
-    return new LoopbackGoogleAuth({ clientId: this.pluginSettings.googleClientId }, transport, store, (url) => shell.openExternal(url));
+    const stateStore: GoogleOAuthStateStore = {
+      load: async () => this.pluginSettings.googleOAuthState,
+      save: async (state) => { this.pluginSettings.googleOAuthState = state; await this.saveSettings(); },
+      clear: async () => { this.pluginSettings.googleOAuthState = undefined; await this.saveSettings(); },
+    };
+    return new WorkerGoogleAuth(
+      { serviceUrl: this.pluginSettings.syncServiceUrl },
+      transport,
+      store,
+      stateStore,
+      () => {
+        const browser = window.open("about:blank", "_blank");
+        if (!browser) return undefined;
+        browser.opener = null;
+        return {
+          navigate: (url: string) => { browser.location.href = url; },
+          close: () => browser.close(),
+        };
+      },
+    );
   }
 
   private manifestStore(): DataManifestStore {

@@ -1,9 +1,9 @@
-# Second Brain for Obsidian
+# Sken Brain for Obsidian
 
 Private, local-first Obsidian plugin for a simple second brain:
 
 - local vault remains the writing source of truth;
-- Google Drive mirrors user files across desktop/laptop devices;
+- Google Drive mirrors user files across desktop and mobile devices;
 - conflicts are preserved under `_sync-conflicts/`;
 - Related Notes are scored locally from note context, tags, links, folder, and recency;
 - Ask Vault, Explain relation, Summarize, Extract structure, and Create note use bounded local context;
@@ -21,18 +21,18 @@ npm run build
 The build produces `main.js`. Copy `manifest.json`, `main.js`, and `styles.css` into:
 
 ```text
-<vault>/.obsidian/plugins/second-brain/
+<vault>/.obsidian/plugins/sken-brain/
 ```
 
-Reload Obsidian and enable **Second Brain**.
+Reload Obsidian and enable **Sken Brain**.
 
-## Configure Google Drive
+## Configure cross-platform sync
 
-Follow [docs/setup/google-drive.md](docs/setup/google-drive.md) to create a Google Cloud desktop OAuth client, enable Drive API, choose a folder, and authorize each device. The OAuth token is stored in that device's plugin data and never inside the vault.
+Follow [docs/setup/google-drive.md](docs/setup/google-drive.md) to deploy the included stateless Cloudflare Worker, create a Google OAuth Web client, choose one Drive folder, and authorize each device. Obsidian Sync is not required. OAuth tokens remain in each device's plugin data and are never written into the vault or stored by the Worker.
 
 ## Configure AI
 
-In **Settings → Second Brain**, select OpenAI or DeepSeek and enter the provider's API key and model. `Base URL` is optional for an OpenAI-compatible endpoint. Keys are stored per device and are never uploaded to Drive.
+In **Settings → Sken Brain**, select OpenAI or DeepSeek and enter the provider's API key and model. `Base URL` is optional for an OpenAI-compatible endpoint. Keys are stored per device and are never uploaded to Drive.
 
 ## Sync behavior
 
