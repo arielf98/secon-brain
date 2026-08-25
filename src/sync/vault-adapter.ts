@@ -1,5 +1,5 @@
 import { sha256 } from "../core/hash.js";
-import { isSyncablePath } from "../core/paths.js";
+import { isSyncablePath, pluginLocalPath } from "../core/paths.js";
 import type { FileSnapshot } from "../core/sync-model.js";
 import type { App, TFile } from "obsidian";
 
@@ -28,11 +28,19 @@ export class ObsidianVaultAdapter implements VaultAdapter {
   }
 
   async read(path: string): Promise<ArrayBuffer> {
+    const pluginPath = pluginLocalPath(path);
+    if (pluginPath) return this.app.vault.adapter.readBinary(pluginPath);
     const file = this.getFile(path);
     return this.app.vault.readBinary(file);
   }
 
   async write(path: string, data: ArrayBuffer): Promise<void> {
+    const pluginPath = pluginLocalPath(path);
+    if (pluginPath) {
+      await this.ensureAdapterFolder(parentPath(pluginPath));
+      await this.app.vault.adapter.writeBinary(pluginPath, data);
+      return;
+    }
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing && isVaultFile(existing)) {
       await this.app.vault.modifyBinary(existing, data);
@@ -44,6 +52,11 @@ export class ObsidianVaultAdapter implements VaultAdapter {
   }
 
   async delete(path: string): Promise<void> {
+    const pluginPath = pluginLocalPath(path);
+    if (pluginPath) {
+      await this.app.vault.adapter.remove(pluginPath);
+      return;
+    }
     await this.app.vault.delete(this.getFile(path), true);
   }
 
@@ -63,6 +76,16 @@ export class ObsidianVaultAdapter implements VaultAdapter {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !isVaultFile(file)) throw new Error(`File not found: ${path}`);
     return file;
+  }
+
+  private async ensureAdapterFolder(path: string): Promise<void> {
+    if (!path) return;
+    const segments = path.split("/");
+    let current = "";
+    for (const segment of segments) {
+      current = current ? `${current}/${segment}` : segment;
+      if (!(await this.app.vault.adapter.exists(current))) await this.app.vault.adapter.mkdir(current);
+    }
   }
 }
 

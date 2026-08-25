@@ -40,6 +40,7 @@ export interface DriveUploadResult {
 export interface GoogleDrive {
   listTree(rootId: string): Promise<RemoteFile[]>;
   download(driveId: string): Promise<Uint8Array>;
+  delete(driveId: string): Promise<void>;
   upload(path: string, bytes: Uint8Array, parentId: string, mimeType: string): Promise<DriveUploadResult>;
   update(driveId: string, bytes: Uint8Array, mimeType: string): Promise<DriveUploadResult>;
   ensureFolder(path: string, rootId: string): Promise<string>;
@@ -138,10 +139,14 @@ export class GoogleDriveClient implements GoogleDrive {
     return new Uint8Array(response.body);
   }
 
+  async delete(driveId: string): Promise<void> {
+    await this.request({ method: "DELETE", url: `${DRIVE_API}/${encodeURIComponent(driveId)}` });
+  }
+
   async upload(path: string, bytes: Uint8Array, parentId: string, mimeType: string): Promise<DriveUploadResult> {
     const boundary = `second-brain-${Date.now().toString(36)}`;
     const metadata = jsonBytes({ name: basename(path), parents: [parentId], mimeType });
-    const line = new TextEncoder().encode;
+    const line = (value: string) => new TextEncoder().encode(value);
     const body = concatBytes(
       line(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`),
       metadata,
@@ -171,6 +176,7 @@ export class GoogleDriveClient implements GoogleDrive {
   }
 
   async ensureFolder(path: string, rootId: string): Promise<string> {
+    if (!path) return rootId;
     let parentId = rootId;
     const parts = normalizeVaultPath(path).split("/").filter(Boolean);
     for (const part of parts) {

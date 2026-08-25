@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createAuthorizationBrowser,
   OAuthAuthorizationError,
   WorkerGoogleAuth,
   type GoogleOAuthStateStore,
@@ -34,6 +35,20 @@ const jsonResponse = (value: unknown, status = 200): HttpResponse => ({
   status,
   headers: { "content-type": "application/json" },
   body: new TextEncoder().encode(JSON.stringify(value)).buffer,
+});
+
+test("uses the desktop external browser opener when one is available", () => {
+  let opened = "";
+  const reserveBrowser = createAuthorizationBrowser(
+    () => { throw new Error("window.open should not be used on desktop"); },
+    (url) => { opened = url; },
+  );
+
+  const browser = reserveBrowser();
+  assert.ok(browser);
+  browser.navigate("https://accounts.google.com/o/oauth2/v2/auth");
+
+  assert.equal(opened, "https://accounts.google.com/o/oauth2/v2/auth");
 });
 
 class MemoryTokenStore implements GoogleTokenStore {
@@ -218,5 +233,50 @@ test("lists a Drive folder tree with stable relative paths", async () => {
   assert.deepEqual(files.map((file) => file.path), ["Notes/idea.md", "root.md"]);
   assert.equal(files[0]?.hash, "md5-idea");
   assert.match(transport.requests[0]?.url ?? "", /trashed\+%3D\+false|trashed%20%3D%20false/);
+  assert.equal(transport.requests[0]?.headers?.Authorization, "Bearer access-token");
+});
+
+test("keeps root-level uploads in the configured Drive folder", async () => {
+  const transport = new FakeTransport(() => {
+    throw new Error("root-level files should not create a subfolder");
+  });
+  const client = new GoogleDriveClient(transport, async () => "access-token");
+
+  assert.equal(await client.ensureFolder("", "drive-root"), "drive-root");
+  assert.equal(transport.requests.length, 0);
+});
+
+test("uploads multipart file content without losing the TextEncoder context", async () => {
+  const transport = new FakeTransport(() => jsonResponse({
+    id: "drive-file",
+    name: "README.md",
+    mimeType: "text/markdown",
+    md5Checksum: "hash",
+    modifiedTime: "2026-08-25T00:00:00.000Z",
+    size: "4",
+  }));
+  const client = new GoogleDriveClient(transport, async () => "access-token");
+
+  const result = await client.upload(
+    "README.md",
+    new TextEncoder().encode("test"),
+    "drive-root",
+    "text/markdown",
+  );
+
+  assert.equal(result.driveId, "drive-file");
+  assert.equal(transport.requests[0]?.method, "POST");
+});
+
+test("deletes a Drive file by id", async () => {
+  const transport = new FakeTransport((request) => {
+    assert.equal(request.method, "DELETE");
+    assert.equal(request.url, "https://www.googleapis.com/drive/v3/files/drive-file");
+    return { status: 204, headers: {}, body: new ArrayBuffer(0) };
+  });
+  const client = new GoogleDriveClient(transport, async () => "access-token");
+
+  await client.delete("drive-file");
+
   assert.equal(transport.requests[0]?.headers?.Authorization, "Bearer access-token");
 });

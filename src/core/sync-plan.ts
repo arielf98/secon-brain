@@ -8,7 +8,7 @@ export interface SyncSnapshot {
 }
 
 export type SyncAction = {
-  type: "upload" | "download" | "conflict" | "skip";
+  type: "upload" | "download" | "delete-local" | "delete-remote" | "conflict" | "skip";
   path: string;
   remote?: RemoteFile;
   conflictPath?: string;
@@ -62,7 +62,7 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
 
     if (!local && remote) {
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
-      if (!remoteChanged) return { type: "download", path, remote, reason: "preserve-remote-after-local-delete" };
+      if (!remoteChanged) return { type: "delete-remote", path, remote, reason: "deleted-locally" };
       return {
         type: "conflict",
         path,
@@ -74,7 +74,8 @@ export function planSync(snapshot: SyncSnapshot, deviceId: string, now: number):
 
     if (local && !remote) {
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
-      if (!localChanged) return { type: "upload", path, reason: "preserve-local-after-remote-delete" };
+      if (!localChanged) return { type: "delete-local", path, reason: "deleted-remotely" };
+      if (!remoteChanged) return { type: "upload", path, reason: "preserve-local-after-remote-delete" };
       return { type: "conflict", path, reason: "remote-deleted-local-edited" };
     }
 

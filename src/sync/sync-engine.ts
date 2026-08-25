@@ -1,4 +1,5 @@
 import { planSync, type SyncAction } from "../core/sync-plan.js";
+import { isPluginRemotePath } from "../core/paths.js";
 import type { FileSnapshot, ManifestEntry, RemoteFile } from "../core/sync-model.js";
 import { AuthRequiredError, RateLimitError, TransientHttpError } from "../integrations/http.js";
 import type { GoogleDrive } from "../integrations/google-drive.js";
@@ -45,10 +46,12 @@ export class SyncEngine {
     let remote: RemoteFile[];
     try {
       base = await this.manifest.load();
-      [local, remote] = await Promise.all([
+      const [localFiles, remoteFiles] = await Promise.all([
         this.retry(() => this.vault.listFiles()),
         this.retry(() => this.drive.listTree(this.rootFolderId)),
       ]);
+      local = localFiles;
+      remote = remoteFiles.filter((file) => !isPluginRemotePath(file.path));
     } catch (error) {
       return this.failedReport(report, error);
     }
@@ -62,7 +65,8 @@ export class SyncEngine {
     try {
       for (const action of actions) await this.apply(action, report);
       const afterLocal = await this.retry(() => this.vault.listFiles());
-      const afterRemote = await this.retry(() => this.drive.listTree(this.rootFolderId));
+      const afterRemote = (await this.retry(() => this.drive.listTree(this.rootFolderId)))
+        .filter((file) => !isPluginRemotePath(file.path));
       await this.manifest.save(buildManifest(afterLocal, afterRemote, this.clock.now(), base, actions));
     } catch (error) {
       return this.failedReport(report, error);
@@ -92,6 +96,17 @@ export class SyncEngine {
       const data = await this.retry(() => this.drive.download(action.remote!.driveId));
       await this.vault.write(action.path, toArrayBuffer(data));
       report.downloaded.push(action.path);
+      return;
+    }
+
+    if (action.type === "delete-local") {
+      await this.vault.delete(action.path);
+      return;
+    }
+
+    if (action.type === "delete-remote") {
+      if (!action.remote) throw new Error(`Missing remote file for delete: ${action.path}`);
+      await this.retry(() => this.drive.delete(action.remote!.driveId));
       return;
     }
 

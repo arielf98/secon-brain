@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { sha256 } from "../src/core/hash.js";
-import { isSyncablePath, normalizeVaultPath } from "../src/core/paths.js";
+import { isSyncablePath, normalizeVaultPath, pluginLocalPath } from "../src/core/paths.js";
 import type { FileSnapshot, ManifestEntry, RemoteFile } from "../src/core/sync-model.js";
 import { makeConflictPath } from "../src/core/conflicts.js";
 import { planSync } from "../src/core/sync-plan.js";
@@ -18,6 +18,12 @@ test("excludes Obsidian internals but keeps user attachments", () => {
 test("normalizes vault paths", () => {
   assert.equal(normalizeVaultPath("./Notes\\idea.md"), "Notes/idea.md");
   assert.throws(() => normalizeVaultPath("./"), /empty path/);
+});
+
+test("maps only the Sken Brain bundle from Drive to the local plugin folder", () => {
+  assert.equal(pluginLocalPath("obsidian/plugins/sken-brain/main.js"), ".obsidian/plugins/sken-brain/main.js");
+  assert.equal(pluginLocalPath("obsidian/plugins/sken-brain/data.json"), undefined);
+  assert.equal(pluginLocalPath("obsidian/plugins/other/main.js"), undefined);
 });
 
 test("hash is stable and hexadecimal", async () => {
@@ -116,6 +122,36 @@ test("surfaces a remote deletion against a local edit as a conflict", () => {
     type: "conflict",
     path: "Notes/idea.md",
     reason: "remote-deleted-local-edited",
+  }]);
+});
+
+test("plans a local deletion as a remote delete when Drive is unchanged", () => {
+  const remote = remoteFile("Notes/idea.md", "base");
+  const actions = planSync({
+    local: {},
+    remote: { "Notes/idea.md": remote },
+    base: { "Notes/idea.md": baseFile("Notes/idea.md", "base") },
+  }, "desktop", 1);
+
+  assert.deepEqual(actions, [{
+    type: "delete-remote",
+    path: "Notes/idea.md",
+    remote,
+    reason: "deleted-locally",
+  }]);
+});
+
+test("plans a remote deletion as a local delete when Obsidian is unchanged", () => {
+  const actions = planSync({
+    local: { "Notes/idea.md": localFile("Notes/idea.md", "base") },
+    remote: {},
+    base: { "Notes/idea.md": baseFile("Notes/idea.md", "base") },
+  }, "desktop", 1);
+
+  assert.deepEqual(actions, [{
+    type: "delete-local",
+    path: "Notes/idea.md",
+    reason: "deleted-remotely",
   }]);
 });
 

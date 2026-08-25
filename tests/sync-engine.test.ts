@@ -71,6 +71,12 @@ class FakeDrive implements GoogleDrive {
     return new Uint8Array(file.data);
   }
 
+  async delete(driveId: string): Promise<void> {
+    const entry = [...this.files.entries()].find(([, value]) => value.remote.driveId === driveId);
+    if (!entry) throw new Error(`missing remote file: ${driveId}`);
+    this.files.delete(entry[0]);
+  }
+
   async upload(path: string, data: Uint8Array, _parentId: string, mimeType: string): Promise<DriveUploadResult> {
     const driveId = `drive-${this.nextId++}`;
     const content = data.slice().buffer;
@@ -160,6 +166,47 @@ test("downloads a remote-only change into the local vault", async () => {
   assert.equal(report.status, "synced");
   assert.deepEqual(report.downloaded, ["Notes/idea.md"]);
   assert.equal(text(await vault.read("Notes/idea.md")), "new remote");
+});
+
+test("keeps plugin files out of the normal vault sync", async () => {
+  const vault = new FakeVault({});
+  const drive = new FakeDrive({
+    "obsidian/plugins/sken-brain/main.js": { hash: "plugin-main", content: "plugin" },
+    "obsidian/plugins/sken-brain/data.json": { hash: "plugin-data", content: "settings" },
+  });
+  const manifest = new MemoryManifest({});
+
+  const report = await engineFor(vault, drive, manifest).sync();
+
+  assert.deepEqual(report.downloaded, []);
+  assert.equal(vault.files.has("obsidian/plugins/sken-brain/main.js"), false);
+  assert.equal(vault.files.has("obsidian/plugins/sken-brain/data.json"), false);
+});
+
+test("deletes a remote file after a local deletion", async () => {
+  const oldLocalHash = await sha256(bytes("old"));
+  const vault = new FakeVault({});
+  const drive = new FakeDrive({ "Notes/idea.md": { hash: "remote-old", content: "old" } });
+  const manifest = new MemoryManifest({ "Notes/idea.md": baseEntry(oldLocalHash, "remote-old") });
+
+  const report = await engineFor(vault, drive, manifest).sync();
+
+  assert.equal(report.status, "synced");
+  assert.equal(drive.files.has("Notes/idea.md"), false);
+  assert.deepEqual(manifest.snapshot(), {});
+});
+
+test("deletes a local file after a remote deletion", async () => {
+  const oldLocalHash = await sha256(bytes("old"));
+  const vault = new FakeVault({ "Notes/idea.md": "old" });
+  const drive = new FakeDrive({});
+  const manifest = new MemoryManifest({ "Notes/idea.md": baseEntry(oldLocalHash, "remote-old") });
+
+  const report = await engineFor(vault, drive, manifest).sync();
+
+  assert.equal(report.status, "synced");
+  assert.equal(vault.files.has("Notes/idea.md"), false);
+  assert.deepEqual(manifest.snapshot(), {});
 });
 
 test("writes a remote conflict copy without replacing the local original", async () => {

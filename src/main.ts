@@ -1,4 +1,4 @@
-import { Notice, Plugin, type ObsidianProtocolData } from "obsidian";
+import { Notice, Platform, Plugin, type ObsidianProtocolData } from "obsidian";
 import { DeepSeekClient } from "./ai/deepseek-client.js";
 import { AiCommands } from "./ai/ai-commands.js";
 import type { AiPreview } from "./ai/ai-types.js";
@@ -6,6 +6,7 @@ import { LocalContextRetriever } from "./ai/context-retriever.js";
 import { OpenAiClient } from "./ai/openai-client.js";
 import { NoteIndex } from "./core/note-index.js";
 import {
+  createAuthorizationBrowser,
   WorkerGoogleAuth,
   type GoogleOAuthStateStore,
   type GoogleTokenStore,
@@ -21,6 +22,7 @@ import { RELATED_NOTES_VIEW_TYPE, registerSecondBrainCommands } from "./obsidian
 import { SecondBrainSettingTab, normalizeSettings, type SecondBrainSettings } from "./obsidian/settings-tab.js";
 import { SyncStatusBar } from "./obsidian/status-bar.js";
 import { DataManifestStore } from "./sync/manifest-store.js";
+import { PluginUpdater } from "./sync/plugin-updater.js";
 import { SyncEngine } from "./sync/sync-engine.js";
 import type { SyncReport } from "./sync/sync-report.js";
 import { ObsidianVaultAdapter } from "./sync/vault-adapter.js";
@@ -117,7 +119,21 @@ export default class SecondBrainPlugin extends Plugin {
     try {
       const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
-      this.showReport(await engine.sync());
+      const report = await engine.sync();
+      if (report.status === "synced" || report.status === "conflict") {
+        try {
+          const mode = Platform.isDesktopApp ? "publish" : "download";
+          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId, { mode }).sync();
+          if (updated.length) {
+            new Notice(mode === "publish"
+              ? "Sken Brain plugin bundle published to Google Drive."
+              : "Sken Brain plugin updated. Reload Obsidian to apply it.");
+          }
+        } catch (error) {
+          new Notice(`Sken Brain plugin update failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      this.showReport(report);
     } catch (error) {
       this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: [error instanceof Error ? error.message : String(error)] });
     }
@@ -227,15 +243,10 @@ export default class SecondBrainPlugin extends Plugin {
       transport,
       store,
       stateStore,
-      () => {
-        const browser = window.open("about:blank", "_blank");
-        if (!browser) return undefined;
-        browser.opener = null;
-        return {
-          navigate: (url: string) => { browser.location.href = url; },
-          close: () => browser.close(),
-        };
-      },
+      createAuthorizationBrowser(
+        () => window.open("about:blank", "_blank"),
+        desktopExternalBrowser(),
+      ),
     );
   }
 
@@ -279,5 +290,15 @@ export default class SecondBrainPlugin extends Plugin {
     this.statusBar?.setReport(report);
     if (report.status === "conflict") new Notice(`Sync conflict: ${report.conflicts.length} file(s)`);
     if (report.status === "auth-required") new Notice("Google Drive authorization is required.");
+  }
+}
+
+function desktopExternalBrowser(): ((url: string) => void) | undefined {
+  if (!Platform.isDesktopApp) return undefined;
+  try {
+    const { shell } = require("electron") as { shell: { openExternal(url: string): Promise<void> } };
+    return (url) => { void shell.openExternal(url); };
+  } catch {
+    return undefined;
   }
 }

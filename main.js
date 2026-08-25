@@ -148,6 +148,11 @@ var DeepSeekClient = class {
 
 // src/core/paths.ts
 var TEMP_FILE_PATTERNS = [/~$/, /\.swp$/i, /\.tmp$/i, /\.lock$/i];
+var PLUGIN_REMOTE_PREFIX = "obsidian/plugins/";
+var PLUGIN_REMOTE_ROOT = "obsidian/plugins/sken-brain/";
+var PLUGIN_LOCAL_ROOT = ".obsidian/plugins/sken-brain/";
+var SKEN_BRAIN_PLUGIN_FILES = ["manifest.json", "main.js", "styles.css"];
+var PLUGIN_FILES = new Set(SKEN_BRAIN_PLUGIN_FILES);
 function normalizeVaultPath(path) {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "");
   const clean = normalized.split("/").filter((segment) => segment.length > 0 && segment !== ".").join("/");
@@ -163,6 +168,23 @@ function isSyncablePath(path) {
     if (lower === ".obsidian" || lower.startsWith(".obsidian/")) return false;
     if (lower === ".trash" || lower.startsWith(".trash/")) return false;
     return !TEMP_FILE_PATTERNS.some((pattern) => pattern.test(normalized));
+  } catch {
+    return false;
+  }
+}
+function pluginLocalPath(path) {
+  try {
+    const normalized = normalizeVaultPath(path);
+    if (!normalized.startsWith(PLUGIN_REMOTE_ROOT)) return void 0;
+    const file = normalized.slice(PLUGIN_REMOTE_ROOT.length);
+    return PLUGIN_FILES.has(file) ? `${PLUGIN_LOCAL_ROOT}${file}` : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function isPluginRemotePath(path) {
+  try {
+    return normalizeVaultPath(path).startsWith(PLUGIN_REMOTE_PREFIX);
   } catch {
     return false;
   }
@@ -430,6 +452,20 @@ function overlapCount(left, right) {
 }
 
 // src/integrations/google-auth.ts
+function createAuthorizationBrowser(openWindow, openExternal) {
+  return () => {
+    if (openExternal) return { navigate: openExternal, close: () => void 0 };
+    const browser = openWindow();
+    if (!browser) return void 0;
+    browser.opener = null;
+    return {
+      navigate: (url) => {
+        browser.location.href = url;
+      },
+      close: () => browser.close()
+    };
+  };
+}
 var OAuthAuthorizationError = class extends Error {
   constructor(message) {
     super(message);
@@ -623,10 +659,13 @@ var GoogleDriveClient = class {
     const response = await this.request({ method: "GET", url: `${DRIVE_API}/${encodeURIComponent(driveId)}?alt=media` });
     return new Uint8Array(response.body);
   }
-  async upload(path, bytes, parentId, mimeType2) {
+  async delete(driveId) {
+    await this.request({ method: "DELETE", url: `${DRIVE_API}/${encodeURIComponent(driveId)}` });
+  }
+  async upload(path, bytes, parentId, mimeType3) {
     const boundary = `second-brain-${Date.now().toString(36)}`;
-    const metadata = jsonBytes({ name: basename(path), parents: [parentId], mimeType: mimeType2 });
-    const line = new TextEncoder().encode;
+    const metadata = jsonBytes({ name: basename(path), parents: [parentId], mimeType: mimeType3 });
+    const line = (value) => new TextEncoder().encode(value);
     const body = concatBytes(
       line(`--${boundary}\r
 Content-Type: application/json; charset=UTF-8\r
@@ -635,7 +674,7 @@ Content-Type: application/json; charset=UTF-8\r
       metadata,
       line(`\r
 --${boundary}\r
-Content-Type: ${mimeType2}\r
+Content-Type: ${mimeType3}\r
 \r
 `),
       bytes,
@@ -652,17 +691,18 @@ Content-Type: ${mimeType2}\r
     const file = responseJson(response);
     return { driveId: file.id, hash: remoteHash(file) };
   }
-  async update(driveId, bytes, mimeType2) {
+  async update(driveId, bytes, mimeType3) {
     const response = await this.request({
       method: "PATCH",
       url: `${DRIVE_UPLOAD_API}/${encodeURIComponent(driveId)}?uploadType=media&fields=id,name,mimeType,md5Checksum,modifiedTime,size`,
-      headers: { "Content-Type": mimeType2 },
+      headers: { "Content-Type": mimeType3 },
       body: bytes
     });
     const file = responseJson(response);
     return { driveId: file.id, hash: remoteHash(file) };
   }
   async ensureFolder(path, rootId) {
+    if (!path) return rootId;
     let parentId = rootId;
     const parts = normalizeVaultPath(path).split("/").filter(Boolean);
     for (const part of parts) {
@@ -988,6 +1028,11 @@ function statusLabel(status) {
   if (status === "auth-required") return "Auth required";
   return status[0].toUpperCase() + status.slice(1);
 }
+function statusSummary(report) {
+  const label = statusLabel(report.status);
+  if (report.errors.length) return `${label} \xB7 ${report.errors[0]}`;
+  return `${label} \xB7 ${report.uploaded.length} uploaded \xB7 ${report.downloaded.length} downloaded${report.conflicts.length ? ` \xB7 ${report.conflicts.length} conflicts` : ""}`;
+}
 
 // src/obsidian/related-notes-view.ts
 var RelatedNotesView = class extends import_obsidian4.ItemView {
@@ -1108,7 +1153,7 @@ var SyncStatusBar = class {
     this.element = element;
   }
   setReport(report) {
-    this.element.setText(statusLabel(report.status));
+    this.element.setText(statusSummary(report));
     this.element.dataset.syncStatus = report.status;
     this.element.title = report.errors.join("\n") || `${report.uploaded.length} uploaded, ${report.downloaded.length} downloaded`;
   }
@@ -1140,6 +1185,75 @@ function isStoredManifest(value) {
   if (!value || typeof value !== "object") return false;
   const candidate = value;
   return candidate.version === 1 && !!candidate.entries && typeof candidate.entries === "object";
+}
+
+// src/sync/plugin-updater.ts
+var PluginUpdater = class {
+  constructor(vault, drive, rootFolderId, options = { mode: "download" }) {
+    this.vault = vault;
+    this.drive = drive;
+    this.rootFolderId = rootFolderId;
+    this.options = options;
+  }
+  async sync() {
+    const remoteFiles = (await this.drive.listTree(this.rootFolderId)).sort((a, b) => a.path.localeCompare(b.path));
+    if (this.options.mode === "publish") return this.publish(remoteFiles);
+    return this.download(remoteFiles);
+  }
+  async download(remoteFiles) {
+    const pluginFiles = remoteFiles.filter((file) => pluginLocalPath(file.path));
+    const updated = [];
+    for (const remote of pluginFiles) {
+      const data = await this.drive.download(remote.driveId);
+      const local = await readOptional(this.vault, remote.path);
+      if (local && sameBytes(local, data)) continue;
+      await this.vault.write(remote.path, toArrayBuffer(data));
+      updated.push(remote.path);
+    }
+    return updated;
+  }
+  async publish(remoteFiles) {
+    const remoteByPath = new Map(remoteFiles.map((file) => [file.path, file]));
+    const updated = [];
+    let parentId;
+    for (const file of SKEN_BRAIN_PLUGIN_FILES) {
+      const path = `obsidian/plugins/sken-brain/${file}`;
+      const local = await readOptional(this.vault, path);
+      if (!local) continue;
+      const remote = remoteByPath.get(path);
+      if (remote) {
+        const current = await this.drive.download(remote.driveId);
+        if (sameBytes(local, current)) continue;
+        await this.drive.update(remote.driveId, new Uint8Array(local), mimeType(path));
+      } else {
+        parentId != null ? parentId : parentId = await this.drive.ensureFolder("obsidian/plugins/sken-brain", this.rootFolderId);
+        await this.drive.upload(path, new Uint8Array(local), parentId, mimeType(path));
+      }
+      updated.push(path);
+    }
+    return updated.sort((a, b) => a.localeCompare(b));
+  }
+};
+async function readOptional(vault, path) {
+  try {
+    return await vault.read(path);
+  } catch {
+    return void 0;
+  }
+}
+function sameBytes(local, remote) {
+  const localBytes = new Uint8Array(local);
+  if (localBytes.byteLength !== remote.byteLength) return false;
+  return localBytes.every((value, index) => value === remote[index]);
+}
+function toArrayBuffer(data) {
+  return data.slice().buffer;
+}
+function mimeType(path) {
+  if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".js")) return "application/javascript";
+  if (path.endsWith(".css")) return "text/css";
+  return "application/octet-stream";
 }
 
 // src/core/conflicts.ts
@@ -1201,7 +1315,7 @@ function planSync(snapshot, deviceId, now) {
     }
     if (!local && remote) {
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
-      if (!remoteChanged) return { type: "download", path, remote, reason: "preserve-remote-after-local-delete" };
+      if (!remoteChanged) return { type: "delete-remote", path, remote, reason: "deleted-locally" };
       return {
         type: "conflict",
         path,
@@ -1212,7 +1326,8 @@ function planSync(snapshot, deviceId, now) {
     }
     if (local && !remote) {
       if (!localChanged && !remoteChanged) return { type: "skip", path, reason: "conflict-baseline" };
-      if (!localChanged) return { type: "upload", path, reason: "preserve-local-after-remote-delete" };
+      if (!localChanged) return { type: "delete-local", path, reason: "deleted-remotely" };
+      if (!remoteChanged) return { type: "upload", path, reason: "preserve-local-after-remote-delete" };
       return { type: "conflict", path, reason: "remote-deleted-local-edited" };
     }
     return { type: "skip", path, reason: "unchanged" };
@@ -1250,10 +1365,12 @@ var SyncEngine = class {
     let remote;
     try {
       base = await this.manifest.load();
-      [local, remote] = await Promise.all([
+      const [localFiles, remoteFiles] = await Promise.all([
         this.retry(() => this.vault.listFiles()),
         this.retry(() => this.drive.listTree(this.rootFolderId))
       ]);
+      local = localFiles;
+      remote = remoteFiles.filter((file) => !isPluginRemotePath(file.path));
     } catch (error) {
       return this.failedReport(report, error);
     }
@@ -1265,7 +1382,7 @@ var SyncEngine = class {
     try {
       for (const action of actions) await this.apply(action, report);
       const afterLocal = await this.retry(() => this.vault.listFiles());
-      const afterRemote = await this.retry(() => this.drive.listTree(this.rootFolderId));
+      const afterRemote = (await this.retry(() => this.drive.listTree(this.rootFolderId))).filter((file) => !isPluginRemotePath(file.path));
       await this.manifest.save(buildManifest(afterLocal, afterRemote, this.clock.now(), base, actions));
     } catch (error) {
       return this.failedReport(report, error);
@@ -1279,9 +1396,9 @@ var SyncEngine = class {
       const data = new Uint8Array(await this.vault.read(action.path));
       const parentId = await this.drive.ensureFolder(parentPath(action.path), this.rootFolderId);
       if (action.remote) {
-        await this.retry(() => this.drive.update(action.remote.driveId, data, mimeType(action.path)));
+        await this.retry(() => this.drive.update(action.remote.driveId, data, mimeType2(action.path)));
       } else {
-        await this.retry(() => this.drive.upload(action.path, data, parentId, mimeType(action.path)));
+        await this.retry(() => this.drive.upload(action.path, data, parentId, mimeType2(action.path)));
       }
       report.uploaded.push(action.path);
       return;
@@ -1289,14 +1406,23 @@ var SyncEngine = class {
     if (action.type === "download") {
       if (!action.remote) throw new Error(`Missing remote file for download: ${action.path}`);
       const data = await this.retry(() => this.drive.download(action.remote.driveId));
-      await this.vault.write(action.path, toArrayBuffer(data));
+      await this.vault.write(action.path, toArrayBuffer2(data));
       report.downloaded.push(action.path);
+      return;
+    }
+    if (action.type === "delete-local") {
+      await this.vault.delete(action.path);
+      return;
+    }
+    if (action.type === "delete-remote") {
+      if (!action.remote) throw new Error(`Missing remote file for delete: ${action.path}`);
+      await this.retry(() => this.drive.delete(action.remote.driveId));
       return;
     }
     report.conflicts.push(action.path);
     if (action.remote && action.conflictPath) {
       const data = await this.retry(() => this.drive.download(action.remote.driveId));
-      await this.vault.write(action.conflictPath, toArrayBuffer(data));
+      await this.vault.write(action.conflictPath, toArrayBuffer2(data));
     }
   }
   async retry(operation) {
@@ -1363,14 +1489,14 @@ function buildManifest(localFiles, remoteFiles, now, previous, actions) {
   }
   return entries;
 }
-function toArrayBuffer(data) {
+function toArrayBuffer2(data) {
   return data.slice().buffer;
 }
 function parentPath(path) {
   const separator = path.lastIndexOf("/");
   return separator === -1 ? "" : path.slice(0, separator);
 }
-function mimeType(path) {
+function mimeType2(path) {
   var _a;
   const extension = (_a = path.split(".").pop()) == null ? void 0 : _a.toLowerCase();
   if (extension === "md") return "text/markdown";
@@ -1400,10 +1526,18 @@ var ObsidianVaultAdapter = class {
     }));
   }
   async read(path) {
+    const pluginPath = pluginLocalPath(path);
+    if (pluginPath) return this.app.vault.adapter.readBinary(pluginPath);
     const file = this.getFile(path);
     return this.app.vault.readBinary(file);
   }
   async write(path, data) {
+    const pluginPath = pluginLocalPath(path);
+    if (pluginPath) {
+      await this.ensureAdapterFolder(parentPath2(pluginPath));
+      await this.app.vault.adapter.writeBinary(pluginPath, data);
+      return;
+    }
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing && isVaultFile(existing)) {
       await this.app.vault.modifyBinary(existing, data);
@@ -1414,6 +1548,11 @@ var ObsidianVaultAdapter = class {
     await this.app.vault.createBinary(path, data);
   }
   async delete(path) {
+    const pluginPath = pluginLocalPath(path);
+    if (pluginPath) {
+      await this.app.vault.adapter.remove(pluginPath);
+      return;
+    }
     await this.app.vault.delete(this.getFile(path), true);
   }
   async ensureFolder(path) {
@@ -1431,6 +1570,15 @@ var ObsidianVaultAdapter = class {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !isVaultFile(file)) throw new Error(`File not found: ${path}`);
     return file;
+  }
+  async ensureAdapterFolder(path) {
+    if (!path) return;
+    const segments = path.split("/");
+    let current = "";
+    for (const segment of segments) {
+      current = current ? `${current}/${segment}` : segment;
+      if (!await this.app.vault.adapter.exists(current)) await this.app.vault.adapter.mkdir(current);
+    }
   }
 };
 function isVaultFile(value) {
@@ -1531,7 +1679,19 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     try {
       const drive = new GoogleDriveClient(transport, () => this.googleAuthClient.getAccessToken());
       const engine = new SyncEngine(vault, drive, this.manifestStore(), { now: () => Date.now() }, this.pluginSettings.deviceId, this.pluginSettings.driveFolderId);
-      this.showReport(await engine.sync());
+      const report = await engine.sync();
+      if (report.status === "synced" || report.status === "conflict") {
+        try {
+          const mode = import_obsidian6.Platform.isDesktopApp ? "publish" : "download";
+          const updated = await new PluginUpdater(vault, drive, this.pluginSettings.driveFolderId, { mode }).sync();
+          if (updated.length) {
+            new import_obsidian6.Notice(mode === "publish" ? "Sken Brain plugin bundle published to Google Drive." : "Sken Brain plugin updated. Reload Obsidian to apply it.");
+          }
+        } catch (error) {
+          new import_obsidian6.Notice(`Sken Brain plugin update failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      this.showReport(report);
     } catch (error) {
       this.showReport({ status: "auth-required", uploaded: [], downloaded: [], conflicts: [], errors: [error instanceof Error ? error.message : String(error)] });
     }
@@ -1637,17 +1797,10 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
       transport,
       store,
       stateStore,
-      () => {
-        const browser = window.open("about:blank", "_blank");
-        if (!browser) return void 0;
-        browser.opener = null;
-        return {
-          navigate: (url) => {
-            browser.location.href = url;
-          },
-          close: () => browser.close()
-        };
-      }
+      createAuthorizationBrowser(
+        () => window.open("about:blank", "_blank"),
+        desktopExternalBrowser()
+      )
     );
   }
   manifestStore() {
@@ -1690,3 +1843,14 @@ var SecondBrainPlugin = class extends import_obsidian6.Plugin {
     if (report.status === "auth-required") new import_obsidian6.Notice("Google Drive authorization is required.");
   }
 };
+function desktopExternalBrowser() {
+  if (!import_obsidian6.Platform.isDesktopApp) return void 0;
+  try {
+    const { shell } = require("electron");
+    return (url) => {
+      void shell.openExternal(url);
+    };
+  } catch {
+    return void 0;
+  }
+}
